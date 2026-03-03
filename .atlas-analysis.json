@@ -1,0 +1,90 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "SMTP Server",
+  "projectDescription": "Create custom SMTP and LMTP server instances on the fly with Node.js",
+  "theme": "aspen",
+  "primaryColor": "#2563eb",
+  "lightColor": "#60a5fa",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/server-configuration",
+              "concepts/authentication",
+              "concepts/handling-messages",
+              "concepts/session-management"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/tls-security",
+              "guides/lmtp-support",
+              "guides/proxy-protocol",
+              "guides/logging",
+              "guides/error-handling"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api/smtp-server",
+              "api/configuration-options",
+              "api/handler-methods",
+              "api/session-object",
+              "api/events"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "api/sasl-authentication",
+              "api/smtp-stream",
+              "api/tls-options"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Custom SMTP and LMTP server creation",
+    "Multiple authentication methods (PLAIN, LOGIN, CRAM-MD5, XOAUTH2)",
+    "TLS/STARTTLS support with SNI",
+    "Proxy protocol support (HAProxy)",
+    "Message size limits and validation",
+    "Extensible handler system"
+  ],
+  "publicApiSurface": [
+    "SMTPServer",
+    "new SMTPServer(options)",
+    "server.listen(port, host)",
+    "server.close(callback)",
+    "server.updateSecureContext(options)",
+    "onAuth(auth, session, callback)",
+    "onConnect(session, callback)",
+    "onMailFrom(address, session, callback)",
+    "onRcptTo(address, session, callback)",
+    "onData(stream, session, callback)",
+    "onSecure(socket, session, callback)",
+    "onClose(session)"
+  ]
+}
