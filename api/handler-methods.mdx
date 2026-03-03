@@ -1,0 +1,590 @@
+---
+title: Handler Methods
+description: Handler methods for processing SMTP commands and connections
+---
+
+Handler methods are callbacks that process SMTP commands and connection events. They can be defined either as options in the constructor or as instance methods.
+
+## onConnect
+
+Called when a new client connection is established, before the greeting is sent.
+
+### Signature
+
+```javascript
+onConnect(session, callback)
+```
+
+### Parameters
+
+<ParamField path="session" type="Object">
+  [Session object](/api/session-object) containing connection information
+</ParamField>
+
+<ParamField path="callback" type="Function">
+  Callback function `(err)`. Call with an Error to reject the connection.
+</ParamField>
+
+### Example
+
+<CodeGroup>
+
+```javascript IP Filtering
+const server = new SMTPServer({
+  onConnect(session, callback) {
+    // Reject connections from specific IP
+    if (session.remoteAddress === '192.0.2.1') {
+      const err = new Error('Connection not allowed');
+      err.responseCode = 421;
+      return callback(err);
+    }
+    callback();
+  }
+});
+```
+
+```javascript Rate Limiting
+const connections = new Map();
+
+const server = new SMTPServer({
+  onConnect(session, callback) {
+    const ip = session.remoteAddress;
+    const count = (connections.get(ip) || 0) + 1;
+    
+    if (count > 5) {
+      return callback(new Error('Too many connections'));
+    }
+    
+    connections.set(ip, count);
+    callback();
+  }
+});
+```
+
+</CodeGroup>
+
+<Note>
+The default implementation calls `callback()` immediately.
+</Note>
+
+---
+
+## onSecure
+
+Called after a TLS connection is established (either via STARTTLS or direct TLS).
+
+### Signature
+
+```javascript
+onSecure(socket, session, callback)
+```
+
+### Parameters
+
+<ParamField path="socket" type="tls.TLSSocket">
+  The TLS socket object
+</ParamField>
+
+<ParamField path="session" type="Object">
+  [Session object](/api/session-object) with TLS information
+</ParamField>
+
+<ParamField path="callback" type="Function">
+  Callback function `(err)`. Call with an Error to close the connection.
+</ParamField>
+
+### Example
+
+```javascript
+const server = new SMTPServer({
+  onSecure(socket, session, callback) {
+    // Verify client certificate
+    const cert = socket.getPeerCertificate();
+    
+    if (!cert || !cert.subject) {
+      return callback(new Error('Client certificate required'));
+    }
+    
+    console.log('Client cert:', cert.subject.CN);
+    callback();
+  }
+});
+```
+
+<Note>
+The default implementation calls `callback()` immediately.
+</Note>
+
+---
+
+## onAuth
+
+Called when a client attempts authentication.
+
+### Signature
+
+```javascript
+onAuth(auth, session, callback)
+```
+
+### Parameters
+
+<ParamField path="auth" type="Object">
+  Authentication object containing:
+  
+  <Expandable title="auth properties">
+    <ResponseField name="method" type="String" required>
+      Authentication method: `'PLAIN'`, `'LOGIN'`, `'CRAM-MD5'`, `'XOAUTH2'`, or `'XCLIENT'`
+    </ResponseField>
+    
+    <ResponseField name="username" type="String">
+      Provided username (for PLAIN and LOGIN)
+    </ResponseField>
+    
+    <ResponseField name="password" type="String">
+      Provided password (for PLAIN and LOGIN)
+    </ResponseField>
+    
+    <ResponseField name="validatePassword" type="Function">
+      For CRAM-MD5: Function to validate password. Call as `auth.validatePassword(password)` returns boolean.
+    </ResponseField>
+    
+    <ResponseField name="accessToken" type="String">
+      For XOAUTH2: OAuth2 access token
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="session" type="Object">
+  [Session object](/api/session-object)
+</ParamField>
+
+<ParamField path="callback" type="Function">
+  Callback function `(err, response)`. 
+  
+  - On success: `callback(null, { user: userData })`
+  - On failure: `callback(new Error('Authentication failed'))`
+</ParamField>
+
+### Response Object
+
+<ResponseField name="user" type="Any">
+  User data to store in `session.user`. Can be username, user ID, or user object.
+</ResponseField>
+
+<ResponseField name="data" type="Object">
+  For XOAUTH2: Object with `status`, `schemes`, and `scope` properties for continuation.
+</ResponseField>
+
+<ResponseField name="message" type="String">
+  Custom error message to return to client.
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```javascript Basic Authentication
+const server = new SMTPServer({
+  onAuth(auth, session, callback) {
+    const validUser = 'admin';
+    const validPass = 'secret';
+    
+    if (auth.username !== validUser || auth.password !== validPass) {
+      return callback(new Error('Invalid credentials'));
+    }
+    
+    callback(null, { user: auth.username });
+  }
+});
+```
+
+```javascript CRAM-MD5
+const server = new SMTPServer({
+  authMethods: ['CRAM-MD5'],
+  
+  onAuth(auth, session, callback) {
+    if (auth.method === 'CRAM-MD5') {
+      const password = lookupPassword(auth.username);
+      
+      if (!auth.validatePassword(password)) {
+        return callback(new Error('Invalid credentials'));
+      }
+      
+      callback(null, { user: auth.username });
+    }
+  }
+});
+```
+
+```javascript Database Lookup
+const server = new SMTPServer({
+  async onAuth(auth, session, callback) {
+    try {
+      const user = await db.users.findOne({
+        username: auth.username,
+        password: hashPassword(auth.password)
+      });
+      
+      if (!user) {
+        return callback(new Error('Invalid credentials'));
+      }
+      
+      callback(null, { user: user.id });
+    } catch (err) {
+      callback(err);
+    }
+  }
+});
+```
+
+</CodeGroup>
+
+<Warning>
+The default implementation rejects all authentication attempts. You must implement this handler to enable authentication.
+</Warning>
+
+---
+
+## onMailFrom
+
+Called for the MAIL FROM command to validate the sender address.
+
+### Signature
+
+```javascript
+onMailFrom(address, session, callback)
+```
+
+### Parameters
+
+<ParamField path="address" type="Object">
+  Address object containing:
+  
+  <Expandable title="address properties">
+    <ResponseField name="address" type="String" required>
+      The email address (e.g., `"user@example.com"`)
+    </ResponseField>
+    
+    <ResponseField name="args" type="Object">
+      ESMTP parameters (e.g., `{ SIZE: '12345', BODY: '8BITMIME' }`)
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="session" type="Object">
+  [Session object](/api/session-object)
+</ParamField>
+
+<ParamField path="callback" type="Function">
+  Callback function `(err)`. Call with an Error to reject the sender.
+</ParamField>
+
+### Error Properties
+
+<ResponseField name="responseCode" type="Number">
+  SMTP response code (e.g., `550` for permanent failure, `450` for temporary)
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+
+```javascript Block Domains
+const server = new SMTPServer({
+  onMailFrom(address, session, callback) {
+    const blockedDomains = ['spam.com', 'blocked.net'];
+    const domain = address.address.split('@')[1];
+    
+    if (blockedDomains.includes(domain)) {
+      const err = new Error('Domain not allowed');
+      err.responseCode = 550;
+      return callback(err);
+    }
+    
+    callback();
+  }
+});
+```
+
+```javascript Require Authentication
+const server = new SMTPServer({
+  onMailFrom(address, session, callback) {
+    if (!session.user) {
+      const err = new Error('Authentication required');
+      err.responseCode = 530;
+      return callback(err);
+    }
+    
+    callback();
+  }
+});
+```
+
+</CodeGroup>
+
+<Note>
+The default implementation accepts all sender addresses.
+</Note>
+
+---
+
+## onRcptTo
+
+Called for the RCPT TO command to validate each recipient address.
+
+### Signature
+
+```javascript
+onRcptTo(address, session, callback)
+```
+
+### Parameters
+
+<ParamField path="address" type="Object">
+  Address object (same structure as onMailFrom)
+</ParamField>
+
+<ParamField path="session" type="Object">
+  [Session object](/api/session-object) including `session.envelope.mailFrom`
+</ParamField>
+
+<ParamField path="callback" type="Function">
+  Callback function `(err)`. Call with an Error to reject the recipient.
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```javascript Local Domains Only
+const server = new SMTPServer({
+  onRcptTo(address, session, callback) {
+    const localDomains = ['example.com', 'example.net'];
+    const domain = address.address.split('@')[1];
+    
+    if (!localDomains.includes(domain)) {
+      return callback(new Error('Relay not permitted'));
+    }
+    
+    callback();
+  }
+});
+```
+
+```javascript Mailbox Validation
+const server = new SMTPServer({
+  async onRcptTo(address, session, callback) {
+    try {
+      const exists = await checkMailboxExists(address.address);
+      
+      if (!exists) {
+        const err = new Error('Mailbox does not exist');
+        err.responseCode = 550;
+        return callback(err);
+      }
+      
+      callback();
+    } catch (err) {
+      callback(err);
+    }
+  }
+});
+```
+
+</CodeGroup>
+
+<Note>
+The default implementation accepts all recipient addresses.
+</Note>
+
+---
+
+## onData
+
+Called for the DATA command to process the message content.
+
+### Signature
+
+```javascript
+onData(stream, session, callback)
+```
+
+### Parameters
+
+<ParamField path="stream" type="Stream">
+  Readable stream of the message content
+  
+  <Expandable title="stream properties">
+    <ResponseField name="sizeExceeded" type="Boolean">
+      Set to `true` if message size exceeded the limit
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="session" type="Object">
+  [Session object](/api/session-object) with complete envelope information
+</ParamField>
+
+<ParamField path="callback" type="Function">
+  Callback function `(err, message)`. Call when message processing is complete.
+  
+  - `err`: Error object if processing failed
+  - `message`: Success message string (or array for LMTP)
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```javascript Save to File
+const fs = require('fs');
+const path = require('path');
+
+const server = new SMTPServer({
+  onData(stream, session, callback) {
+    const fileName = path.join('/tmp', session.id + '.eml');
+    const writeStream = fs.createWriteStream(fileName);
+    
+    stream.pipe(writeStream);
+    
+    stream.on('end', () => {
+      if (stream.sizeExceeded) {
+        const err = new Error('Message too large');
+        err.responseCode = 552;
+        return callback(err);
+      }
+      
+      callback(null, 'Message saved: ' + session.id);
+    });
+    
+    writeStream.on('error', callback);
+  }
+});
+```
+
+```javascript Parse Message
+const { simpleParser } = require('mailparser');
+
+const server = new SMTPServer({
+  async onData(stream, session, callback) {
+    try {
+      const parsed = await simpleParser(stream);
+      
+      console.log('Subject:', parsed.subject);
+      console.log('From:', parsed.from.text);
+      console.log('Text:', parsed.text);
+      
+      // Store in database, forward, etc.
+      await storeMessage(parsed, session.envelope);
+      
+      callback(null, 'Message queued');
+    } catch (err) {
+      callback(err);
+    }
+  }
+});
+```
+
+```javascript Virus Scanning
+const server = new SMTPServer({
+  onData(stream, session, callback) {
+    const chunks = [];
+    
+    stream.on('data', chunk => chunks.push(chunk));
+    
+    stream.on('end', async () => {
+      const buffer = Buffer.concat(chunks);
+      
+      try {
+        const scanResult = await virusScanner.scan(buffer);
+        
+        if (scanResult.infected) {
+          const err = new Error('Virus detected');
+          err.responseCode = 550;
+          return callback(err);
+        }
+        
+        callback(null, 'Message accepted');
+      } catch (err) {
+        callback(err);
+      }
+    });
+  }
+});
+```
+
+```javascript LMTP Per-Recipient Responses
+const server = new SMTPServer({
+  lmtp: true,
+  
+  onData(stream, session, callback) {
+    stream.on('end', () => {
+      // Return array of responses, one per recipient
+      const responses = session.envelope.rcptTo.map(rcpt => {
+        if (isMailboxFull(rcpt.address)) {
+          const err = new Error('Mailbox full');
+          err.responseCode = 452;
+          return err;
+        }
+        return 'Delivered to ' + rcpt.address;
+      });
+      
+      callback(null, responses);
+    });
+  }
+});
+```
+
+</CodeGroup>
+
+<Warning>
+You must consume the stream (by piping or reading) to prevent memory leaks. The default implementation discards the message.
+</Warning>
+
+---
+
+## onClose
+
+Called when a connection is closed.
+
+### Signature
+
+```javascript
+onClose(session)
+```
+
+### Parameters
+
+<ParamField path="session" type="Object">
+  [Session object](/api/session-object) for the closed connection
+</ParamField>
+
+<Note>
+This method does not take a callback and is called asynchronously.
+</Note>
+
+### Example
+
+```javascript
+const server = new SMTPServer({
+  onClose(session) {
+    console.log('Connection closed:', session.id);
+    
+    // Clean up session-specific resources
+    if (session.user) {
+      logUserDisconnect(session.user);
+    }
+  }
+});
+```
+
+<Note>
+The default implementation does nothing.
+</Note>
+
+## See Also
+
+- [Session Object](/api/session-object) - Complete session object structure
+- [Configuration Options](/api/configuration-options) - Server configuration
+- [Events](/api/events) - Server events

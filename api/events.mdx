@@ -1,0 +1,354 @@
+---
+title: Events
+description: Events emitted by SMTPServer instances
+---
+
+The SMTPServer class extends EventEmitter and emits events for connection lifecycle and errors. You can listen to these events to monitor server activity, implement logging, or integrate with external systems.
+
+## Listening to Events
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+const server = new SMTPServer({ /* options */ });
+
+server.on('connect', data => {
+  console.log('New connection:', data);
+});
+
+server.on('error', err => {
+  console.error('Server error:', err);
+});
+
+server.on('close', () => {
+  console.log('Server closed');
+});
+```
+
+## Events
+
+### connect
+
+Emitted when a new client connection is established and ready to proceed (after HELO/EHLO or XCLIENT/XFORWARD).
+
+<Note>
+This event is emitted after the connection is validated, not immediately when the socket connects. Use the `onConnect` handler for early connection control.
+</Note>
+
+#### Event Data
+
+<ResponseField name="id" type="String" required>
+  Unique connection identifier
+</ResponseField>
+
+<ResponseField name="localAddress" type="String">
+  Server IP address
+</ResponseField>
+
+<ResponseField name="localPort" type="Number">
+  Server port number
+</ResponseField>
+
+<ResponseField name="remoteAddress" type="String">
+  Client IP address
+</ResponseField>
+
+<ResponseField name="remotePort" type="Number">
+  Client port number
+</ResponseField>
+
+<ResponseField name="hostNameAppearsAs" type="String">
+  Hostname provided by client in HELO/EHLO
+</ResponseField>
+
+<ResponseField name="clientHostname" type="String">
+  Client hostname from reverse DNS or `[IP]`
+</ResponseField>
+
+#### Example
+
+<CodeGroup>
+
+```javascript Connection Logger
+server.on('connect', data => {
+  console.log(`[${data.id}] Connection from ${data.remoteAddress}:${data.remotePort}`);
+  console.log(`[${data.id}] Client hostname: ${data.clientHostname}`);
+  console.log(`[${data.id}] Identified as: ${data.hostNameAppearsAs}`);
+});
+```
+
+```javascript Connection Tracking
+const connections = new Map();
+
+server.on('connect', data => {
+  connections.set(data.id, {
+    ip: data.remoteAddress,
+    hostname: data.clientHostname,
+    connectedAt: new Date()
+  });
+  
+  console.log(`Active connections: ${connections.size}`);
+});
+
+server.on('close', () => {
+  // Clean up on server close
+  connections.clear();
+});
+```
+
+```javascript Metrics Collection
+const metrics = {
+  totalConnections: 0,
+  activeConnections: new Set()
+};
+
+server.on('connect', data => {
+  metrics.totalConnections++;
+  metrics.activeConnections.add(data.id);
+  
+  // Send to monitoring system
+  sendMetric('smtp.connections.total', metrics.totalConnections);
+  sendMetric('smtp.connections.active', metrics.activeConnections.size);
+});
+```
+
+</CodeGroup>
+
+---
+
+### error
+
+Emitted when an error occurs with the server or a connection.
+
+<Warning>
+You should always listen to the `error` event. Unhandled error events can crash your application.
+</Warning>
+
+#### Event Data
+
+<ResponseField name="error" type="Error" required>
+  Error object with the following properties:
+  
+  <Expandable title="error properties">
+    <ResponseField name="message" type="String">
+      Error message
+    </ResponseField>
+    
+    <ResponseField name="code" type="String">
+      Error code (e.g., `'ECONNRESET'`, `'TLSError'`)
+    </ResponseField>
+    
+    <ResponseField name="remoteAddress" type="String">
+      Client IP address (if connection-related)
+    </ResponseField>
+    
+    <ResponseField name="responseCode" type="Number">
+      SMTP response code sent to client (if applicable)
+    </ResponseField>
+    
+    <ResponseField name="meta" type="Object">
+      Additional metadata about the error context
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+<CodeGroup>
+
+```javascript Basic Error Handler
+server.on('error', err => {
+  console.error('SMTP Server Error:', err.message);
+  
+  if (err.code === 'EADDRINUSE') {
+    console.error('Port already in use!');
+    process.exit(1);
+  }
+});
+```
+
+```javascript Detailed Error Logging
+server.on('error', err => {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    error: err.message,
+    code: err.code,
+    remoteAddress: err.remoteAddress,
+    responseCode: err.responseCode,
+    stack: err.stack
+  };
+  
+  // Log to file or monitoring service
+  logger.error('SMTP error', logEntry);
+  
+  // Alert on critical errors
+  if (err.code === 'TLSError') {
+    alerting.send('TLS error on SMTP server', logEntry);
+  }
+});
+```
+
+```javascript Error Categorization
+server.on('error', err => {
+  // Categorize errors
+  if (err.code === 'ECONNRESET' || err.code === 'EPIPE') {
+    // Network errors - usually safe to ignore
+    console.log('Client disconnect:', err.remoteAddress);
+  } else if (err.code === 'TLSError') {
+    // TLS/SSL errors - may indicate config issues
+    console.error('TLS error:', err.message);
+    metrics.increment('smtp.errors.tls');
+  } else {
+    // Other errors - may need attention
+    console.error('Unexpected error:', err);
+    metrics.increment('smtp.errors.other');
+  }
+});
+```
+
+</CodeGroup>
+
+---
+
+### close
+
+Emitted when the server is closed and no longer accepting connections.
+
+<Note>
+This event is emitted after all connections have been closed and the server has fully shut down.
+</Note>
+
+#### Event Data
+
+This event has no data payload.
+
+#### Example
+
+<CodeGroup>
+
+```javascript Graceful Shutdown
+server.on('close', () => {
+  console.log('SMTP server has been shut down');
+  
+  // Clean up resources
+  database.disconnect();
+  cache.close();
+  
+  console.log('All resources cleaned up');
+});
+
+// Initiate shutdown
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, closing server...');
+  server.close();
+});
+```
+
+```javascript Restart on Close
+server.on('close', () => {
+  console.log('Server closed, restarting in 5 seconds...');
+  
+  setTimeout(() => {
+    const newServer = new SMTPServer(serverOptions);
+    newServer.listen(port);
+  }, 5000);
+});
+```
+
+</CodeGroup>
+
+## Complete Example
+
+Here's a comprehensive example using all events:
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+// Connection tracking
+const connections = new Map();
+let totalConnections = 0;
+let totalErrors = 0;
+
+const server = new SMTPServer({
+  logger: true,
+  
+  onAuth(auth, session, callback) {
+    // Implement authentication
+    callback(null, { user: auth.username });
+  },
+  
+  onData(stream, session, callback) {
+    stream.on('end', () => {
+      callback(null, 'Message queued');
+    });
+  }
+});
+
+// Track new connections
+server.on('connect', data => {
+  totalConnections++;
+  connections.set(data.id, {
+    remoteAddress: data.remoteAddress,
+    hostname: data.clientHostname,
+    connectedAt: new Date(),
+    authenticated: false
+  });
+  
+  console.log(`[CONNECT] ${data.id} from ${data.remoteAddress}`);
+  console.log(`Active: ${connections.size}, Total: ${totalConnections}`);
+});
+
+// Handle errors
+server.on('error', err => {
+  totalErrors++;
+  
+  if (err.remoteAddress) {
+    console.error(`[ERROR] ${err.remoteAddress}: ${err.message}`);
+  } else {
+    console.error(`[ERROR] Server: ${err.message}`);
+  }
+  
+  // Alert on high error rate
+  if (totalErrors > 100) {
+    console.error('[ALERT] High error rate detected!');
+  }
+});
+
+// Handle server close
+server.on('close', () => {
+  console.log('[CLOSE] Server shut down');
+  console.log(`Final stats - Total connections: ${totalConnections}, Errors: ${totalErrors}`);
+  connections.clear();
+});
+
+// Start server
+server.listen(2525, () => {
+  console.log('SMTP server listening on port 2525');
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('Shutting down gracefully...');
+  server.close(() => {
+    process.exit(0);
+  });
+});
+```
+
+## Event Timing
+
+Events are emitted in this typical order:
+
+1. **connect** - After client completes HELO/EHLO (or XCLIENT/XFORWARD if enabled)
+2. **error** - Whenever an error occurs (can happen at any time)
+3. **close** - When `server.close()` completes
+
+<Note>
+The `connect` event may be delayed if `useXClient` or `useXForward` options are enabled, as the server waits for these commands before emitting the event.
+</Note>
+
+## See Also
+
+- [Handler Methods](/api/handler-methods) - Handler callbacks for connection control
+- [Session Object](/api/session-object) - Session data structure
+- [Configuration Options](/api/configuration-options) - Server configuration

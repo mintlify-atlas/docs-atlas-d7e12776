@@ -1,0 +1,361 @@
+---
+title: 'TLS Options'
+description: 'SSL/TLS certificate and security configuration options for secure SMTP connections'
+---
+
+The `tls-options` module provides default TLS/SSL configuration for secure SMTP connections, including pre-generated localhost certificates for development and production-ready security settings.
+
+## Usage
+
+```javascript
+const getTLSOptions = require('smtp-server/lib/tls-options');
+
+// Use defaults
+let tlsOptions = getTLSOptions();
+
+// Override with custom options
+let customOptions = getTLSOptions({
+    key: fs.readFileSync('private-key.pem'),
+    cert: fs.readFileSync('certificate.pem'),
+    minVersion: 'TLSv1.2'
+});
+
+let server = new SMTPServer({
+    secure: true,
+    ...customOptions
+});
+```
+
+## getTLSOptions(opts)
+
+Merges custom TLS options with secure defaults.
+
+<ParamField path="opts" type="Object">
+  Custom TLS options to override defaults. Accepts all standard Node.js `tls.createServer` options.
+</ParamField>
+
+**Returns:** `Object` - Merged TLS configuration object
+
+```javascript lib/tls-options.js
+function getTLSOptions(opts) {
+    return Object.assign({}, tlsDefaults, opts || {});
+}
+```
+
+## Default TLS Options
+
+The module provides secure defaults suitable for SMTP servers:
+
+### Security Settings
+
+<ResponseField name="honorCipherOrder" type="boolean" default="true">
+  Server chooses cipher suite order instead of client preference, improving security by ensuring strong ciphers are preferred
+</ResponseField>
+
+<ResponseField name="requestOCSP" type="boolean" default="false">
+  Whether to request OCSP stapling from clients (disabled by default for compatibility)
+</ResponseField>
+
+<ResponseField name="sessionIdContext" type="string">
+  Session ID context for TLS session resumption. Automatically generated as SHA-1 hash of process arguments:
+  
+  ```javascript
+  crypto.createHash('sha1').update(process.argv.join(' ')).digest('hex').slice(0, 32)
+  ```
+</ResponseField>
+
+<ResponseField name="minVersion" type="string" default="TLSv1">
+  Minimum TLS version accepted. Set to `TLSv1` for compatibility with legacy SMTP clients.
+  
+  <Warning>
+  For production, consider setting `minVersion: 'TLSv1.2'` for better security, though this may reject very old email clients.
+  </Warning>
+</ResponseField>
+
+## Default Certificates
+
+The module includes pre-generated RSA certificates for localhost testing.
+
+### Private Key
+
+<ResponseField name="key" type="string">
+  RSA private key in PEM format (2048-bit)
+  
+  ```
+  -----BEGIN RSA PRIVATE KEY-----
+  MIIEpAIBAAKCAQEA6Z5Qqhw+oWfhtEiMHE32Ht94mwTBpAfjt3vPpX8M7DMCTwHs
+  ...
+  -----END RSA PRIVATE KEY-----
+  ```
+</ResponseField>
+
+### Certificate
+
+<ResponseField name="cert" type="string">
+  X.509 certificate in PEM format for `localhost`
+  
+  - **Subject:** localhost
+  - **Valid from:** 2015-02-12
+  - **Valid to:** 2025-02-09
+  - **Key size:** 2048-bit RSA
+  
+  ```
+  -----BEGIN CERTIFICATE-----
+  MIICpDCCAYwCCQCuVLVKVTXnAjANBgkqhkiG9w0BAQsFADAUMRIwEAYDVQQDEwls
+  ...
+  -----END CERTIFICATE-----
+  ```
+</ResponseField>
+
+<Warning>
+The default certificates are for **development and testing only**. Never use these in production environments as the private key is publicly available.
+</Warning>
+
+## Production Configuration
+
+For production use, always provide your own certificates:
+
+```javascript
+const fs = require('fs');
+const getTLSOptions = require('smtp-server/lib/tls-options');
+
+let options = getTLSOptions({
+    key: fs.readFileSync('/path/to/private-key.pem'),
+    cert: fs.readFileSync('/path/to/certificate.pem'),
+    ca: fs.readFileSync('/path/to/ca-bundle.pem'),
+    minVersion: 'TLSv1.2',
+    ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384',
+    honorCipherOrder: true
+});
+```
+
+## Common TLS Options
+
+You can override any Node.js TLS option:
+
+### Certificate Options
+
+<ParamField path="key" type="string | Buffer | Array">
+  Private key in PEM format. Can be an array of keys for multiple certificates.
+</ParamField>
+
+<ParamField path="cert" type="string | Buffer | Array">
+  Certificate chain in PEM format. Can be an array for multiple certificates.
+</ParamField>
+
+<ParamField path="ca" type="string | Buffer | Array">
+  Certificate authority bundle for client certificate validation
+</ParamField>
+
+<ParamField path="pfx" type="string | Buffer | Array">
+  PFX or PKCS12 encoded private key and certificate chain
+</ParamField>
+
+<ParamField path="passphrase" type="string">
+  Passphrase for the private key or PFX file
+</ParamField>
+
+### Security Options
+
+<ParamField path="minVersion" type="string">
+  Minimum TLS version: `TLSv1`, `TLSv1.1`, `TLSv1.2`, or `TLSv1.3`
+</ParamField>
+
+<ParamField path="maxVersion" type="string">
+  Maximum TLS version: `TLSv1.3`, `TLSv1.2`, etc.
+</ParamField>
+
+<ParamField path="ciphers" type="string">
+  Cipher suite specification in OpenSSL format
+  
+  ```javascript
+  ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:!aNULL:!MD5:!DSS'
+  ```
+</ParamField>
+
+<ParamField path="honorCipherOrder" type="boolean">
+  If true, server's cipher preference is used instead of client's
+</ParamField>
+
+<ParamField path="ecdhCurve" type="string">
+  ECDH curve name for key exchange (default: auto)
+</ParamField>
+
+### Client Authentication
+
+<ParamField path="requestCert" type="boolean">
+  Request client certificate during handshake
+</ParamField>
+
+<ParamField path="rejectUnauthorized" type="boolean">
+  Reject clients without valid certificates (requires `requestCert: true`)
+</ParamField>
+
+<ParamField path="checkServerIdentity" type="function">
+  Custom function to verify server identity
+</ParamField>
+
+### Session Management
+
+<ParamField path="sessionIdContext" type="string">
+  Unique identifier for TLS session cache (max 32 characters)
+</ParamField>
+
+<ParamField path="sessionTimeout" type="number">
+  Lifetime of TLS sessions in seconds
+</ParamField>
+
+<ParamField path="ticketKeys" type="Buffer">
+  48-byte buffer for TLS session ticket encryption
+</ParamField>
+
+## STARTTLS vs Direct TLS
+
+The SMTP server supports both STARTTLS (opportunistic TLS) and direct TLS (implicit TLS):
+
+### STARTTLS (Port 587/25)
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+let server = new SMTPServer({
+    secure: false,
+    authOptional: true,
+    onAuth(auth, session, callback) {
+        // Require STARTTLS before auth
+        if (!session.tlsOptions) {
+            return callback(new Error('TLS required'));
+        }
+        callback(null, { user: 'authenticated' });
+    },
+    ...getTLSOptions({
+        key: fs.readFileSync('key.pem'),
+        cert: fs.readFileSync('cert.pem')
+    })
+});
+```
+
+### Direct TLS (Port 465)
+
+```javascript
+let server = new SMTPServer({
+    secure: true,
+    ...getTLSOptions({
+        key: fs.readFileSync('key.pem'),
+        cert: fs.readFileSync('cert.pem')
+    })
+});
+```
+
+<Info>
+STARTTLS on port 587 is the modern standard for email submission. Direct TLS on port 465 is legacy but still widely supported.
+</Info>
+
+## Certificate Generation
+
+For development, generate self-signed certificates:
+
+```bash
+# Generate private key
+openssl genrsa -out key.pem 2048
+
+# Generate self-signed certificate (valid 365 days)
+openssl req -new -x509 -key key.pem -out cert.pem -days 365
+
+# For production, use a Certificate Authority:
+# Generate CSR
+openssl req -new -key key.pem -out csr.pem
+
+# Submit csr.pem to your CA (Let's Encrypt, DigiCert, etc.)
+```
+
+## Let's Encrypt Integration
+
+For free production certificates, use Let's Encrypt with automatic renewal:
+
+```javascript
+const getTLSOptions = require('smtp-server/lib/tls-options');
+const fs = require('fs');
+const path = require('path');
+
+// Let's Encrypt certificate paths
+const certPath = '/etc/letsencrypt/live/mail.example.com';
+
+let options = getTLSOptions({
+    key: fs.readFileSync(path.join(certPath, 'privkey.pem')),
+    cert: fs.readFileSync(path.join(certPath, 'fullchain.pem')),
+    minVersion: 'TLSv1.2'
+});
+```
+
+<Note>
+Remember to reload certificates when Let's Encrypt renews them (typically every 90 days).
+</Note>
+
+## SNI Support
+
+For multi-domain support using Server Name Indication (SNI):
+
+```javascript
+let options = getTLSOptions({
+    SNICallback: (servername, callback) => {
+        const ctx = tls.createSecureContext({
+            key: fs.readFileSync(`/certs/${servername}/key.pem`),
+            cert: fs.readFileSync(`/certs/${servername}/cert.pem`)
+        });
+        callback(null, ctx);
+    }
+});
+```
+
+## Security Best Practices
+
+1. **Never use default certificates in production**
+2. **Use TLSv1.2 or higher** for modern security:
+   ```javascript
+   minVersion: 'TLSv1.2'
+   ```
+3. **Configure strong cipher suites**:
+   ```javascript
+   ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384'
+   ```
+4. **Enable cipher order preference**:
+   ```javascript
+   honorCipherOrder: true
+   ```
+5. **Keep certificates updated** - automate renewal with Let's Encrypt
+6. **Use certificate pinning** for critical connections
+7. **Monitor certificate expiration** dates
+
+## Troubleshooting
+
+### Certificate Errors
+
+```javascript
+// Enable TLS debugging
+process.env.NODE_DEBUG = 'tls';
+
+// Verify certificate chain
+const tls = require('tls');
+const socket = tls.connect({
+    host: 'localhost',
+    port: 465,
+    rejectUnauthorized: false
+}, () => {
+    console.log('Certificate:', socket.getPeerCertificate());
+    socket.end();
+});
+```
+
+### Testing TLS Configuration
+
+```bash
+# Test STARTTLS
+openssl s_client -starttls smtp -connect localhost:587
+
+# Test direct TLS
+openssl s_client -connect localhost:465
+
+# Check certificate details
+openssl x509 -in cert.pem -text -noout
+```

@@ -1,0 +1,304 @@
+---
+title: 'SASL Authentication'
+description: 'Authentication mechanisms for SMTP server including PLAIN, LOGIN, XOAUTH2, and CRAM-MD5'
+---
+
+The SASL (Simple Authentication and Security Layer) module provides multiple authentication mechanisms for the SMTP server. Each mechanism follows RFC-compliant implementations for secure user authentication.
+
+## Supported Mechanisms
+
+The SMTP server supports the following SASL authentication mechanisms:
+
+- **PLAIN** - Simple username/password authentication (RFC 4616)
+- **LOGIN** - Legacy username/password authentication
+- **XOAUTH2** - OAuth 2.0 bearer token authentication
+- **CRAM-MD5** - Challenge-response authentication (RFC 2195)
+- **XCLIENT** - Proxy-based username validation
+
+## Authentication Handler
+
+All authentication mechanisms call the server's `onAuth` handler with mechanism-specific parameters.
+
+### Handler Parameters
+
+<ParamField path="method" type="string" required>
+  Authentication method being used: `PLAIN`, `LOGIN`, `XOAUTH2`, `CRAM-MD5`, or `XCLIENT`
+</ParamField>
+
+<ParamField path="username" type="string" required>
+  The username provided by the client
+</ParamField>
+
+<ParamField path="password" type="string">
+  The password provided by the client (not used in XOAUTH2 or CRAM-MD5)
+</ParamField>
+
+<ParamField path="accessToken" type="string">
+  OAuth 2.0 bearer token (XOAUTH2 only)
+</ParamField>
+
+<ParamField path="challenge" type="string">
+  Server-generated challenge string (CRAM-MD5 only)
+</ParamField>
+
+<ParamField path="challengeResponse" type="string">
+  Client's HMAC-MD5 response to challenge (CRAM-MD5 only)
+</ParamField>
+
+<ParamField path="validatePassword" type="function">
+  Function to validate password against challenge response (CRAM-MD5 only)
+  
+  ```javascript
+  validatePassword(password) {
+    let hmac = crypto.createHmac('md5', password);
+    return hmac.update(challenge).digest('hex').toLowerCase() === challengeResponse;
+  }
+  ```
+</ParamField>
+
+### Response Object
+
+<ResponseField name="user" type="object" required>
+  User object to attach to session. If falsy, authentication fails.
+</ResponseField>
+
+<ResponseField name="responseCode" type="number">
+  SMTP response code (default: 535 for errors)
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Custom error message for authentication failures
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Additional data to return to client (XOAUTH2 only)
+</ResponseField>
+
+## PLAIN Authentication
+
+PLAIN authentication transmits credentials in base64-encoded format with null separators.
+
+### Protocol Flow
+
+1. Client sends: `AUTH PLAIN [token]` or `AUTH PLAIN`
+2. If no token provided, server responds with `334` challenge
+3. Client sends base64-encoded credentials: `\0username\0password`
+4. Server validates and responds with `235` on success or `535` on failure
+
+### Implementation
+
+```javascript lib/sasl.js
+SASL_PLAIN(args, callback) {
+    if (args.length > 1) {
+        this.send(501, 'Error: syntax: AUTH PLAIN token');
+        return callback();
+    }
+
+    if (!args.length) {
+        this._nextHandler = SASL.PLAIN_token.bind(this, true);
+        this.send(334);
+        return callback();
+    }
+
+    SASL.PLAIN_token.call(this, false, args[0], callback);
+}
+```
+
+<Note>
+The PLAIN mechanism accepts credentials in the format `authzid\0authcid\0password`. If authzid is empty, authcid is used as the username.
+</Note>
+
+## LOGIN Authentication
+
+LOGIN is a legacy authentication mechanism that prompts for username and password separately.
+
+### Protocol Flow
+
+1. Client sends: `AUTH LOGIN` or `AUTH LOGIN [base64_username]`
+2. Server responds with `334 VXNlcm5hbWU6` ("Username:" in base64)
+3. Client sends base64-encoded username
+4. Server responds with `334 UGFzc3dvcmQ6` ("Password:" in base64)
+5. Client sends base64-encoded password
+6. Server validates and responds with `235` on success or `535` on failure
+
+### Implementation
+
+```javascript lib/sasl.js
+SASL_LOGIN(args, callback) {
+    if (args.length > 1) {
+        this.send(501, 'Error: syntax: AUTH LOGIN');
+        return callback();
+    }
+
+    if (!args.length) {
+        this._nextHandler = SASL.LOGIN_username.bind(this, true);
+        this.send(334, 'VXNlcm5hbWU6'); // "Username:"
+        return callback();
+    }
+
+    SASL.LOGIN_username.call(this, false, args[0], callback);
+}
+```
+
+<Warning>
+LOGIN authentication is considered legacy and less secure than modern mechanisms. Use PLAIN over TLS or XOAUTH2 for production systems.
+</Warning>
+
+## XOAUTH2 Authentication
+
+XOAUTH2 uses OAuth 2.0 bearer tokens for authentication, commonly used with Gmail and Microsoft services.
+
+### Protocol Flow
+
+1. Client sends: `AUTH XOAUTH2 [token]` or `AUTH XOAUTH2`
+2. If no token provided, server responds with `334`
+3. Client sends base64-encoded token: `user=username\1auth=Bearer accessToken\1\1`
+4. Server validates token and responds with `235` on success
+5. On failure, server may respond with `334` and JSON error data
+
+### Token Format
+
+The XOAUTH2 token is parsed from base64-encoded format:
+
+```javascript lib/sasl.js
+Buffer.from(token, 'base64')
+    .toString()
+    .split('\x01')
+    .forEach(part => {
+        part = part.split('=');
+        let key = part.shift().toLowerCase();
+        let value = part.join('=').trim();
+
+        if (key === 'user') {
+            username = value;
+        } else if (key === 'auth') {
+            value = value.split(/\s+/);
+            if (value.shift().toLowerCase() === 'bearer') {
+                accessToken = value.join(' ');
+            }
+        }
+    });
+```
+
+### Error Handling
+
+XOAUTH2 failures can return JSON error data to the client:
+
+```javascript
+this.send(334, Buffer.from(JSON.stringify(response.data || {})).toString('base64'));
+```
+
+<Info>
+XOAUTH2 is the recommended authentication method for modern OAuth-enabled email services.
+</Info>
+
+## CRAM-MD5 Authentication
+
+CRAM-MD5 uses challenge-response authentication with HMAC-MD5, avoiding plaintext password transmission.
+
+### Protocol Flow
+
+1. Client sends: `AUTH CRAM-MD5`
+2. Server generates challenge: `<random.timestamp@hostname>`
+3. Server responds with `334` and base64-encoded challenge
+4. Client computes HMAC-MD5 of challenge using password as key
+5. Client responds with: `username hmac-digest`
+6. Server validates response and sends `235` on success or `535` on failure
+
+### Challenge Generation
+
+```javascript lib/sasl.js
+let challenge = util.format(
+    '<%s%s@%s>',
+    String(Math.random())
+        .replace(/^[0.]+/, '')
+        .substr(0, 8), // random numbers
+    Math.floor(Date.now() / 1000), // timestamp
+    this.name // hostname
+);
+```
+
+### Validation
+
+The server provides a `validatePassword` function to verify the challenge response:
+
+```javascript lib/sasl.js
+validatePassword(password) {
+    let hmac = crypto.createHmac('md5', password);
+    return hmac.update(challenge).digest('hex').toLowerCase() === challengeResponse;
+}
+```
+
+<Note>
+CRAM-MD5 requires the server to have access to plaintext passwords for validation, which may not be suitable for all authentication backends.
+</Note>
+
+## XCLIENT Authentication
+
+XCLIENT is a non-standard authentication method used for SMTP proxy scenarios where the proxy validates the username.
+
+### Implementation
+
+```javascript lib/sasl.js
+SASL_XCLIENT(args, callback) {
+    const username = ((args && args[0]) || '').toString().trim();
+    this._server.onAuth(
+        {
+            method: 'XCLIENT',
+            username,
+            password: null
+        },
+        this.session,
+        (err, response) => {
+            // Handle authentication response
+        }
+    );
+}
+```
+
+<Warning>
+XCLIENT is not a standard SASL mechanism and should only be used in trusted proxy environments.
+</Warning>
+
+## Authentication Abort
+
+Clients can abort authentication by sending `*` during any multi-step authentication exchange:
+
+```javascript
+if (canAbort && token === '*') {
+    this.send(501, 'Authentication aborted');
+    return callback();
+}
+```
+
+## Session Updates
+
+On successful authentication, the session is updated with user information:
+
+```javascript lib/sasl.js
+this.session.user = response.user;
+this.session.transmissionType = this._transmissionType();
+this.send(235, 'Authentication successful');
+```
+
+## Error Codes
+
+<ResponseField name="235" type="string">
+  Authentication successful
+</ResponseField>
+
+<ResponseField name="334" type="string">
+  Continue with authentication (send next credential or challenge)
+</ResponseField>
+
+<ResponseField name="500" type="string">
+  Invalid userdata format
+</ResponseField>
+
+<ResponseField name="501" type="string">
+  Syntax error or authentication aborted
+</ResponseField>
+
+<ResponseField name="535" type="string">
+  Authentication credentials invalid (default failure code)
+</ResponseField>

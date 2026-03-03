@@ -1,0 +1,506 @@
+---
+title: 'Logging'
+description: 'Configure logging to monitor SMTP server activity, connections, and transactions'
+---
+
+## Overview
+
+The SMTP Server library provides comprehensive logging capabilities to help you monitor server activity, debug issues, and track mail transactions. Logging is built on the Nodemailer shared logging infrastructure.
+
+## Quick Start
+
+Enable basic console logging:
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+const server = new SMTPServer({
+  // Enable simple console logging
+  logger: true,
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+
+server.listen(25);
+```
+
+This logs all SMTP activity to the console with timestamps and connection IDs.
+
+## Logger Configuration
+
+The logger is created using Nodemailer's shared logger from `lib/smtp-server.js:53-55`:
+
+```javascript
+this.logger = shared.getLogger(this.options, {
+  component: this.options.component || 'smtp-server'
+});
+```
+
+### Custom Component Name
+
+Customize the logger component name:
+
+```javascript
+const server = new SMTPServer({
+  logger: true,
+  component: 'my-mail-server', // Custom component name
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+```
+
+### Custom Logger Instance
+
+Provide your own logger object:
+
+```javascript
+const bunyan = require('bunyan');
+
+const customLogger = bunyan.createLogger({
+  name: 'smtp-server',
+  level: 'info'
+});
+
+const server = new SMTPServer({
+  logger: customLogger,
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+```
+
+<Info>
+  The logger must implement methods: `info()`, `debug()`, `error()`. Compatible with Bunyan, Winston, and Pino.
+</Info>
+
+## Log Levels
+
+The library uses three log levels:
+
+### Info Level
+
+General server activity and connection events:
+
+```javascript
+// Server listening (lib/smtp-server.js:309-323)
+this.logger.info({
+  tnx: 'listen',
+  host: address.address,
+  port: address.port,
+  secure: !!this.options.secure,
+  protocol: this.options.lmtp ? 'LMTP' : 'SMTP'
+}, '%s%s Server listening on %s:%s',
+  this.options.secure ? 'Secure ' : '',
+  this.options.lmtp ? 'LMTP' : 'SMTP',
+  address.family === 'IPv4' ? address.address : '[' + address.address + ']',
+  address.port
+);
+```
+
+### Debug Level
+
+Detailed protocol-level information:
+
+```javascript
+// SMTP commands (lib/smtp-connection.js:388-396)
+this._server.logger.debug({
+  tnx: 'send',
+  cid: this.id,
+  user: (this.session.user && this.session.user.username) || this.session.user
+}, 'S:', payload);
+```
+
+### Error Level
+
+Errors and failures:
+
+```javascript
+// Connection errors (lib/smtp-connection.js:496-506)
+this._server.logger.error({
+  err,
+  tnx: 'error',
+  user: (this.session.user && this.session.user.username) || this.session.user
+}, '%s %s %s', this.id, this.remoteAddress, err.message);
+```
+
+## Log Transaction Types
+
+The `tnx` field identifies the transaction type:
+
+### Connection Events
+
+```javascript
+// New connection (lib/smtp-connection.js:258-266)
+{ tnx: 'connection', cid: 'abc123', host: '192.168.1.100', hostname: 'client.example.com' }
+
+// Connection closed (lib/smtp-connection.js:475-483)
+{ tnx: 'close', cid: 'abc123', host: '192.168.1.100', user: 'username' }
+```
+
+### Server Events
+
+```javascript
+// Server listening
+{ tnx: 'listen', host: '0.0.0.0', port: 25, secure: false, protocol: 'SMTP' }
+
+// Server closed (lib/smtp-server.js:332-336)
+{ tnx: 'closed' }
+
+// Server closing with pending connections (lib/smtp-server.js:140-148)
+{ tnx: 'close' }
+```
+
+### Protocol Events
+
+```javascript
+// SMTP command received (lib/smtp-connection.js:535-544)
+{ tnx: 'command', cid: 'abc123', command: 'MAIL', user: 'username' }
+
+// SMTP response sent (lib/smtp-connection.js:388-396)
+{ tnx: 'send', cid: 'abc123', user: 'username' }
+
+// Message data (lib/smtp-connection.js:1700-1708)
+{ tnx: 'data', cid: 'abc123', bytes: 12345, user: 'username' }
+```
+
+### TLS Events
+
+```javascript
+// STARTTLS upgrade (lib/smtp-connection.js:1907-1916)
+{ tnx: 'starttls', cid: 'abc123', user: 'username', cipher: 'TLS_AES_256_GCM_SHA384' }
+
+// SNI callback (lib/smtp-server.js:476-484)
+{ tnx: 'sni', servername: 'mail.example.com', err: {...} }
+```
+
+### Proxy Events
+
+```javascript
+// PROXY protocol (lib/smtp-server.js:403-414)
+{ tnx: 'proxy', cid: 'abc123', proxy: '192.168.1.100' }
+```
+
+### Authentication Events
+
+```javascript
+// XCLIENT auth (lib/smtp-connection.js:1226-1234)
+{ tnx: 'deauth', cid: 'abc123', user: 'username' }
+
+// XFORWARD (lib/smtp-connection.js:1336-1347)
+{ tnx: 'xforward', cid: 'abc123', xforwardKey: 'ADDR', xforward: '192.168.1.100' }
+```
+
+## Complete Logging Example
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+const bunyan = require('bunyan');
+
+// Create structured logger
+const logger = bunyan.createLogger({
+  name: 'smtp-server',
+  streams: [
+    {
+      level: 'info',
+      stream: process.stdout
+    },
+    {
+      level: 'debug',
+      path: '/var/log/smtp-debug.log'
+    },
+    {
+      level: 'error',
+      path: '/var/log/smtp-error.log'
+    }
+  ]
+});
+
+const server = new SMTPServer({
+  logger: logger,
+  component: 'mail-gateway',
+  
+  onConnect(session, callback) {
+    logger.info({
+      event: 'connect',
+      cid: session.id,
+      remoteAddress: session.remoteAddress
+    }, 'New connection');
+    callback();
+  },
+  
+  onAuth(auth, session, callback) {
+    logger.info({
+      event: 'auth',
+      cid: session.id,
+      method: auth.method,
+      username: auth.username
+    }, 'Authentication attempt');
+    
+    if (auth.username === 'user' && auth.password === 'pass') {
+      return callback(null, { user: auth.username });
+    }
+    
+    logger.warn({
+      event: 'auth-failed',
+      cid: session.id,
+      username: auth.username
+    }, 'Authentication failed');
+    
+    callback(new Error('Invalid credentials'));
+  },
+  
+  onData(stream, session, callback) {
+    let messageSize = 0;
+    
+    stream.on('data', chunk => {
+      messageSize += chunk.length;
+    });
+    
+    stream.on('end', () => {
+      logger.info({
+        event: 'message',
+        cid: session.id,
+        size: messageSize,
+        from: session.envelope.mailFrom.address,
+        recipients: session.envelope.rcptTo.length
+      }, 'Message received');
+      
+      callback();
+    });
+  }
+});
+
+server.listen(25);
+```
+
+## Example Log Output
+
+### Connection Lifecycle
+
+```json
+{
+  "tnx": "listen",
+  "host": "0.0.0.0",
+  "port": 25,
+  "secure": false,
+  "protocol": "SMTP",
+  "time": "2026-03-03T10:30:00.000Z",
+  "msg": "SMTP Server listening on 0.0.0.0:25"
+}
+
+{
+  "tnx": "connection",
+  "cid": "abc123def456",
+  "host": "192.168.1.100",
+  "hostname": "client.example.com",
+  "time": "2026-03-03T10:30:15.000Z",
+  "msg": "Connection from client.example.com"
+}
+
+{
+  "tnx": "command",
+  "cid": "abc123def456",
+  "command": "EHLO",
+  "time": "2026-03-03T10:30:15.100Z",
+  "msg": "C: EHLO client.example.com"
+}
+
+{
+  "tnx": "send",
+  "cid": "abc123def456",
+  "time": "2026-03-03T10:30:15.110Z",
+  "msg": "S: 250 hostname"
+}
+```
+
+### Message Transaction
+
+```json
+{
+  "tnx": "data",
+  "cid": "abc123def456",
+  "bytes": 12345,
+  "user": "sender",
+  "time": "2026-03-03T10:30:30.000Z",
+  "msg": "C: <12345 bytes of DATA>"
+}
+
+{
+  "tnx": "message",
+  "size": 12345,
+  "time": "2026-03-03T10:30:30.500Z",
+  "msg": "<received 12345 bytes>"
+}
+```
+
+## Integration with Monitoring Tools
+
+### Elasticsearch
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+const winston = require('winston');
+const { ElasticsearchTransport } = require('winston-elasticsearch');
+
+const esTransport = new ElasticsearchTransport({
+  level: 'info',
+  clientOpts: { node: 'http://localhost:9200' },
+  index: 'smtp-logs'
+});
+
+const logger = winston.createLogger({
+  transports: [esTransport]
+});
+
+const server = new SMTPServer({ logger });
+```
+
+### Syslog
+
+```javascript
+const winston = require('winston');
+require('winston-syslog').Syslog;
+
+const logger = winston.createLogger({
+  transports: [
+    new winston.transports.Syslog({
+      host: 'localhost',
+      port: 514,
+      protocol: 'udp4',
+      app_name: 'smtp-server'
+    })
+  ]
+});
+
+const server = new SMTPServer({ logger });
+```
+
+## Filtering Sensitive Data
+
+Avoid logging passwords and message content:
+
+```javascript
+const server = new SMTPServer({
+  logger: true,
+  
+  onAuth(auth, session, callback) {
+    // Don't log the password
+    this.logger.info({
+      event: 'auth',
+      method: auth.method,
+      username: auth.username
+      // password: auth.password - NEVER LOG THIS
+    }, 'Authentication attempt');
+    
+    callback(null, { user: auth.username });
+  },
+  
+  onData(stream, session, callback) {
+    // Don't log message content, only metadata
+    stream.on('end', () => {
+      this.logger.info({
+        from: session.envelope.mailFrom.address,
+        to: session.envelope.rcptTo.map(r => r.address),
+        size: stream.byteCount
+        // Don't include message content
+      }, 'Message received');
+      
+      callback();
+    });
+  }
+});
+```
+
+<Warning>
+  Never log passwords, authentication tokens, or message content. This is a security risk and may violate privacy regulations.
+</Warning>
+
+## Performance Considerations
+
+### Disable Debug Logging in Production
+
+```javascript
+const logger = bunyan.createLogger({
+  name: 'smtp-server',
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug'
+});
+
+const server = new SMTPServer({ logger });
+```
+
+### Async Logging
+
+```javascript
+const pino = require('pino');
+
+// Pino is async by default - better performance
+const logger = pino({
+  level: 'info',
+  transport: {
+    target: 'pino-pretty'
+  }
+});
+
+const server = new SMTPServer({ logger });
+```
+
+## Connection ID Tracking
+
+Every connection has a unique ID for tracing:
+
+```javascript
+// From lib/smtp-server.js:355-357
+id: BigInt('0x' + crypto.randomBytes(10).toString('hex'))
+  .toString(32)
+  .padStart(16, '0')
+```
+
+Use this ID to track a connection through all log entries:
+
+```bash
+# Filter logs by connection ID
+grep "abc123def456" smtp.log
+```
+
+## Closing Logs
+
+From `lib/smtp-server.js:140-148`, the server logs pending connections on close:
+
+```javascript
+this.logger.info({
+  tnx: 'close'
+}, 'Server closing with %s pending connection%s, waiting %s seconds before terminating',
+  connections,
+  connections !== 1 ? 's' : '',
+  timeout / 1000
+);
+```
+
+## Best Practices
+
+<Tip>
+  - Use structured logging (JSON) for easy parsing and searching
+  - Include connection IDs in all log entries for tracing
+  - Set log level to `info` in production to reduce noise
+  - Never log passwords, tokens, or message content
+  - Use async loggers (Pino) for better performance
+  - Rotate log files to prevent disk space issues
+  - Send logs to centralized logging (ELK, Splunk) for analysis
+  - Monitor error logs for security incidents
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Learn how to handle and log errors effectively
+  </Card>
+  <Card title="Proxy Protocol" icon="network-wired" href="/guides/proxy-protocol">
+    Log real client IPs with PROXY protocol
+  </Card>
+</CardGroup>

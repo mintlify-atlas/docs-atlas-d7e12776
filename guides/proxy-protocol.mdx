@@ -1,0 +1,418 @@
+---
+title: 'Proxy Protocol'
+description: 'Support HAProxy PROXY protocol to preserve client IP addresses behind load balancers'
+---
+
+## Overview
+
+The PROXY protocol allows load balancers and proxies to preserve the original client connection information when forwarding TCP connections. This is essential for logging, access control, and security features that depend on the real client IP address.
+
+## What is PROXY Protocol?
+
+When your SMTP server sits behind a load balancer (like HAProxy or nginx), the direct connection comes from the proxy, not the actual client. The PROXY protocol solves this by prepending connection metadata to the TCP stream.
+
+<Info>
+  The PROXY protocol specification is defined in the [HAProxy PROXY protocol documentation](http://www.haproxy.org/download/1.8/doc/proxy-protocol.txt).
+</Info>
+
+## Enabling PROXY Protocol
+
+Enable PROXY protocol support with the `useProxy` option:
+
+<Steps>
+  <Step title="Enable for all connections">
+    ```javascript
+    const { SMTPServer } = require('smtp-server');
+
+    const server = new SMTPServer({
+      // Enable PROXY protocol for all connections
+      useProxy: true,
+      
+      logger: true,
+      
+      onConnect(session, callback) {
+        // session.remoteAddress now contains the real client IP
+        console.log('Real client IP:', session.remoteAddress);
+        console.log('Real client port:', session.remotePort);
+        callback();
+      }
+    });
+
+    server.listen(25);
+    ```
+  </Step>
+
+  <Step title="Verify PROXY header parsing">
+    The server automatically parses the PROXY header and updates session data from `lib/smtp-server.js:354-434`:
+
+    ```javascript
+    onConnect(session, callback) {
+      console.log('Connection ID:', session.id);
+      console.log('Remote address:', session.remoteAddress);
+      console.log('Remote port:', session.remotePort);
+      callback();
+    }
+    ```
+  </Step>
+</Steps>
+
+## Restricting PROXY Protocol by IP
+
+For security, restrict PROXY protocol to trusted proxy IPs:
+
+```javascript
+const server = new SMTPServer({
+  // Only accept PROXY from specific IPs
+  useProxy: [
+    '10.0.0.1',      // Load balancer 1
+    '10.0.0.2',      // Load balancer 2
+    '192.168.1.100'  // Internal proxy
+  ],
+  
+  logger: true,
+  
+  onConnect(session, callback) {
+    console.log('Client IP:', session.remoteAddress);
+    callback();
+  }
+});
+```
+
+<Warning>
+  Always restrict `useProxy` to trusted IPs in production! Accepting PROXY headers from untrusted sources allows IP spoofing.
+</Warning>
+
+## Wildcard Proxy Support
+
+Accept PROXY protocol from any IP (use with caution):
+
+```javascript
+const server = new SMTPServer({
+  // Accept PROXY from any source
+  useProxy: ['*'],
+  
+  onConnect(session, callback) {
+    callback();
+  }
+});
+```
+
+<Warning>
+  Using `useProxy: ['*']` in production is dangerous. Only use this in trusted network environments where all connections come through a proxy.
+</Warning>
+
+## PROXY Header Format
+
+The PROXY protocol header looks like this:
+
+```
+PROXY TCP4 192.168.1.100 10.0.0.1 45678 25\r\n
+```
+
+Format: `PROXY <protocol> <client-ip> <proxy-ip> <client-port> <proxy-port>`
+
+The server parses this automatically from `lib/smtp-server.js:383-426`:
+
+```javascript
+let header = Buffer.concat(chunks, chunklen).toString().trim();
+let params = header.split(' ');
+let commandName = params.shift().toUpperCase();
+
+if (commandName !== 'PROXY') {
+  socket.end('* BAD Invalid PROXY header\r\n');
+  return;
+}
+
+if (params[1]) {
+  socketOptions.remoteAddress = params[1].trim().toLowerCase();
+}
+
+if (params[3]) {
+  socketOptions.remotePort = Number(params[3].trim());
+}
+```
+
+## Logging PROXY Connections
+
+The library automatically logs PROXY connections when logger is enabled:
+
+```javascript
+const server = new SMTPServer({
+  useProxy: ['10.0.0.1', '10.0.0.2'],
+  logger: true, // Enable logging
+  
+  onConnect(session, callback) {
+    callback();
+  }
+});
+```
+
+From `lib/smtp-server.js:403-414`, you'll see log entries like:
+
+```json
+{
+  "tnx": "proxy",
+  "cid": "abc123def456",
+  "proxy": "192.168.1.100"
+}
+```
+
+## Combining with Ignored Hosts
+
+Ignore health checks from load balancers:
+
+```javascript
+const server = new SMTPServer({
+  useProxy: ['10.0.0.1', '10.0.0.2'],
+  
+  // Ignore connections from these IPs (after PROXY parsing)
+  ignoredHosts: [
+    '127.0.0.1',        // Health checks from localhost
+    '10.0.0.0/24'       // Internal monitoring
+  ],
+  
+  logger: true,
+  
+  onConnect(session, callback) {
+    // Ignored hosts won't trigger this
+    console.log('Non-ignored connection from:', session.remoteAddress);
+    callback();
+  }
+});
+```
+
+From `lib/smtp-server.js:363` and `lib/smtp-server.js:399`:
+
+```javascript
+socketOptions.ignore = 
+  this.options.ignoredHosts && 
+  this.options.ignoredHosts.includes(socketOptions.remoteAddress);
+```
+
+<Info>
+  The `ignoredHosts` check happens **after** PROXY header parsing, so the check uses the real client IP, not the proxy IP.
+</Info>
+
+## Session Properties
+
+After PROXY parsing, the session object contains:
+
+```javascript
+onConnect(session, callback) {
+  console.log('Session ID:', session.id);
+  console.log('Local address:', session.localAddress);
+  console.log('Local port:', session.localPort);
+  console.log('Remote address:', session.remoteAddress); // Real client IP
+  console.log('Remote port:', session.remotePort);       // Real client port
+  console.log('Client hostname:', session.clientHostname);
+  
+  callback();
+}
+```
+
+## HAProxy Configuration
+
+Configure HAProxy to send PROXY headers:
+
+```haproxy
+frontend smtp_frontend
+    bind *:25
+    mode tcp
+    default_backend smtp_backend
+
+backend smtp_backend
+    mode tcp
+    balance roundrobin
+    
+    # Send PROXY protocol header
+    server smtp1 10.0.1.10:25 send-proxy
+    server smtp2 10.0.1.11:25 send-proxy
+```
+
+## nginx Configuration
+
+Configure nginx stream proxy with PROXY protocol:
+
+```nginx
+stream {
+    upstream smtp_backend {
+        server 10.0.1.10:25;
+        server 10.0.1.11:25;
+    }
+    
+    server {
+        listen 25;
+        
+        # Enable PROXY protocol
+        proxy_protocol on;
+        
+        proxy_pass smtp_backend;
+    }
+}
+```
+
+## Error Handling
+
+Invalid PROXY headers are rejected automatically:
+
+```javascript
+// From lib/smtp-server.js:387-393
+if (commandName !== 'PROXY') {
+  try {
+    socket.end('* BAD Invalid PROXY header\r\n');
+  } catch {
+    // ignore
+  }
+  return;
+}
+```
+
+The connection is terminated if:
+- First line doesn't start with `PROXY`
+- Header format is invalid
+- Parameters are malformed
+
+## Connection ID Generation
+
+Each connection gets a unique ID, even with PROXY protocol:
+
+```javascript
+// From lib/smtp-server.js:355-357
+let socketOptions = {
+  id: BigInt('0x' + crypto.randomBytes(10).toString('hex'))
+    .toString(32)
+    .padStart(16, '0')
+};
+```
+
+This ID is consistent throughout the connection lifecycle and appears in all logs.
+
+## Testing PROXY Protocol
+
+Test with a manual PROXY header:
+
+```bash
+# Connect and send PROXY header
+printf "PROXY TCP4 192.168.1.100 10.0.0.1 45678 25\r\n" | nc localhost 25
+
+# Server should respond with greeting
+# 220 hostname ESMTP
+
+# Send SMTP commands
+EHLO test.example.com
+# 250-hostname
+# 250 PIPELINING
+```
+
+## Example: IP-Based Access Control
+
+```javascript
+const server = new SMTPServer({
+  useProxy: ['10.0.0.1'], // Trust this proxy
+  logger: true,
+  
+  onConnect(session, callback) {
+    // Block specific IPs (using real client IP from PROXY)
+    const blocklist = ['192.168.1.50', '203.0.113.0/24'];
+    
+    if (blocklist.includes(session.remoteAddress)) {
+      const err = new Error('Access denied');
+      err.responseCode = 554;
+      return callback(err);
+    }
+    
+    callback();
+  },
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+```
+
+## Example: Rate Limiting by Real IP
+
+```javascript
+const rateLimiter = new Map();
+
+const server = new SMTPServer({
+  useProxy: ['10.0.0.1'],
+  
+  onConnect(session, callback) {
+    const clientIP = session.remoteAddress;
+    const now = Date.now();
+    
+    // Get connection history
+    const history = rateLimiter.get(clientIP) || [];
+    const recentConnections = history.filter(t => now - t < 60000);
+    
+    // Allow max 10 connections per minute
+    if (recentConnections.length >= 10) {
+      const err = new Error('Rate limit exceeded');
+      err.responseCode = 421;
+      return callback(err);
+    }
+    
+    // Update history
+    recentConnections.push(now);
+    rateLimiter.set(clientIP, recentConnections);
+    
+    callback();
+  }
+});
+```
+
+## Best Practices
+
+<Tip>
+  - Always restrict `useProxy` to trusted proxy IPs in production
+  - Never use `useProxy: true` or `useProxy: ['*']` on internet-facing servers
+  - Combine with `ignoredHosts` to filter health checks
+  - Use the real client IP for rate limiting and access control
+  - Enable `logger: true` to monitor PROXY connections
+  - Test PROXY configuration thoroughly before deploying
+  - Document which IPs are authorized to send PROXY headers
+</Tip>
+
+## Common Issues
+
+### Connection Immediately Closes
+
+**Problem**: Server expects PROXY header but client doesn't send it.
+
+**Solution**: Ensure proxy is configured to send PROXY headers, or use IP restrictions:
+
+```javascript
+useProxy: ['10.0.0.1'] // Only from proxy, not direct connections
+```
+
+### Wrong IP Logged
+
+**Problem**: Seeing proxy IP instead of client IP.
+
+**Solution**: Enable PROXY protocol on both proxy and server:
+
+```javascript
+useProxy: true // Must be enabled
+```
+
+### Invalid PROXY Header
+
+**Problem**: "BAD Invalid PROXY header" error.
+
+**Solution**: Check proxy configuration sends valid PROXY v1 format:
+
+```
+PROXY TCP4 <client-ip> <proxy-ip> <client-port> <proxy-port>\r\n
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Logging" icon="file-lines" href="/guides/logging">
+    Configure logging to monitor proxy connections
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Handle connection errors and invalid headers
+  </Card>
+</CardGroup>

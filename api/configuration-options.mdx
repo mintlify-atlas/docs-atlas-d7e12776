@@ -1,0 +1,355 @@
+---
+title: Configuration Options
+description: Complete reference for SMTPServer configuration options
+---
+
+## Server Behavior
+
+<ParamField path="name" type="String">
+  Server hostname used in the greeting banner. Defaults to `os.hostname()`.
+  
+  ```javascript
+  { name: 'mail.example.com' }
+  ```
+</ParamField>
+
+<ParamField path="banner" type="String">
+  Additional text to display in the server greeting.
+  
+  ```javascript
+  { banner: 'Welcome to My SMTP Server' }
+  ```
+</ParamField>
+
+<ParamField path="heloResponse" type="String">
+  Custom HELO/EHLO response format. Use `%s` for placeholders (server name, client hostname).
+  Defaults to `"%s Nice to meet you, %s"`.
+  
+  ```javascript
+  { heloResponse: '%s at your service, %s' }
+  ```
+</ParamField>
+
+<ParamField path="size" type="Number">
+  Maximum message size in bytes. If set, the SIZE extension is advertised.
+  
+  ```javascript
+  { size: 10 * 1024 * 1024 } // 10 MB
+  ```
+</ParamField>
+
+<ParamField path="hideSize" type="Boolean" default="false">
+  If `true`, advertises SIZE without the maximum size value.
+</ParamField>
+
+<ParamField path="lmtp" type="Boolean" default="false">
+  If `true`, operates as an LMTP server instead of SMTP.
+  
+  ```javascript
+  { lmtp: true }
+  ```
+</ParamField>
+
+<ParamField path="logger" type="Boolean | Object">
+  Enable logging. Set to `true` for console logging or provide a custom logger object.
+  
+  ```javascript
+  { logger: true }
+  // or
+  { logger: customLoggerInstance }
+  ```
+</ParamField>
+
+<ParamField path="component" type="String" default="'smtp-server'">
+  Component identifier used in logs.
+</ParamField>
+
+## TLS/Security
+
+<ParamField path="secure" type="Boolean" default="false">
+  If `true`, server accepts connections on TLS (SMTPS). Use with `key` and `cert`.
+  
+  ```javascript
+  {
+    secure: true,
+    key: fs.readFileSync('server-key.pem'),
+    cert: fs.readFileSync('server-cert.pem')
+  }
+  ```
+</ParamField>
+
+<ParamField path="needsUpgrade" type="Boolean" default="false">
+  Used internally for delayed TLS upgrade. Set to `true` with `secure: true` to start TLS after connection.
+</ParamField>
+
+<ParamField path="secured" type="Boolean">
+  Internal flag indicating TLS is already established on the socket.
+</ParamField>
+
+<ParamField path="key" type="String | Buffer">
+  Private key for TLS (PEM format).
+</ParamField>
+
+<ParamField path="cert" type="String | Buffer">
+  Certificate for TLS (PEM format).
+</ParamField>
+
+<ParamField path="ca" type="String | Buffer | Array">
+  Certificate authority certificates for TLS.
+</ParamField>
+
+<ParamField path="ciphers" type="String">
+  Cipher suite specification for TLS.
+</ParamField>
+
+<ParamField path="requestCert" type="Boolean">
+  Request client certificate during TLS handshake.
+</ParamField>
+
+<ParamField path="rejectUnauthorized" type="Boolean">
+  Reject connections with invalid client certificates.
+</ParamField>
+
+<ParamField path="sniOptions" type="Object | Map">
+  SNI (Server Name Indication) options for multiple certificates. Map domain names to TLS options.
+  
+  ```javascript
+  {
+    sniOptions: {
+      'mail.example.com': {
+        key: fs.readFileSync('example-key.pem'),
+        cert: fs.readFileSync('example-cert.pem')
+      },
+      'mail.other.com': {
+        key: fs.readFileSync('other-key.pem'),
+        cert: fs.readFileSync('other-cert.pem')
+      }
+    }
+  }
+  ```
+</ParamField>
+
+<ParamField path="SNICallback" type="Function">
+  Custom SNI callback function `(servername, cb) => { cb(null, secureContext) }`.
+</ParamField>
+
+<ParamField path="hideSTARTTLS" type="Boolean" default="false">
+  If `true`, does not advertise STARTTLS capability.
+</ParamField>
+
+<ParamField path="allowInsecureAuth" type="Boolean" default="false">
+  If `true`, allows authentication over non-TLS connections.
+</ParamField>
+
+## Authentication
+
+<ParamField path="authMethods" type="Array<String>" default="['LOGIN', 'PLAIN']">
+  Allowed authentication methods. Available: `'PLAIN'`, `'LOGIN'`, `'CRAM-MD5'`, `'XOAUTH2'`.
+  
+  ```javascript
+  { authMethods: ['PLAIN', 'LOGIN', 'CRAM-MD5'] }
+  ```
+</ParamField>
+
+<ParamField path="authOptional" type="Boolean" default="false">
+  If `true`, authentication is optional (allows unauthenticated mail).
+</ParamField>
+
+<ParamField path="authRequiredMessage" type="String">
+  Custom error message when authentication is required.
+  
+  ```javascript
+  { authRequiredMessage: 'Please authenticate first' }
+  ```
+</ParamField>
+
+<ParamField path="maxAllowedUnauthenticatedCommands" type="Number" default="10">
+  Maximum number of commands allowed before authentication. Set to `false` to disable limit.
+</ParamField>
+
+## SMTP Extensions
+
+<ParamField path="disabledCommands" type="Array<String>" default="[]">
+  List of SMTP commands to disable. Example: `['AUTH', 'STARTTLS']`.
+  
+  ```javascript
+  { disabledCommands: ['STARTTLS'] }
+  ```
+</ParamField>
+
+<ParamField path="hidePIPELINING" type="Boolean" default="false">
+  If `true`, does not advertise PIPELINING extension.
+</ParamField>
+
+<ParamField path="hide8BITMIME" type="Boolean" default="false">
+  If `true`, does not advertise 8BITMIME extension.
+</ParamField>
+
+<ParamField path="hideSMTPUTF8" type="Boolean" default="false">
+  If `true`, does not advertise SMTPUTF8 extension.
+</ParamField>
+
+<ParamField path="hideENHANCEDSTATUSCODES" type="Boolean" default="true">
+  If `true`, does not include enhanced status codes in responses.
+</ParamField>
+
+<ParamField path="hideDSN" type="Boolean" default="true">
+  If `true`, does not advertise DSN (Delivery Status Notification) extension.
+</ParamField>
+
+<ParamField path="hideREQUIRETLS" type="Boolean" default="true">
+  If `true`, does not advertise REQUIRETLS extension (RFC 8689).
+</ParamField>
+
+## Connection Management
+
+<ParamField path="socketTimeout" type="Number" default="60000">
+  Socket inactivity timeout in milliseconds.
+  
+  ```javascript
+  { socketTimeout: 120000 } // 2 minutes
+  ```
+</ParamField>
+
+<ParamField path="closeTimeout" type="Number" default="30000">
+  Time to wait for pending connections to close before forcing shutdown (milliseconds).
+  
+  ```javascript
+  { closeTimeout: 60000 } // 1 minute
+  ```
+</ParamField>
+
+<ParamField path="maxClients" type="Number">
+  Maximum number of concurrent connections. New connections are rejected with 421 if exceeded.
+  
+  ```javascript
+  { maxClients: 100 }
+  ```
+</ParamField>
+
+<ParamField path="disableReverseLookup" type="Boolean" default="false">
+  If `true`, skips DNS reverse lookup for client IP addresses.
+</ParamField>
+
+<ParamField path="resolver" type="Object">
+  Custom DNS resolver with a `reverse(ip, callback)` method.
+</ParamField>
+
+## Proxy Support
+
+<ParamField path="useProxy" type="Boolean | Array">
+  Enable PROXY protocol support. Set to `true` for all connections or provide array of allowed IP addresses.
+  
+  ```javascript
+  { useProxy: ['127.0.0.1', '10.0.0.1'] }
+  // or
+  { useProxy: true }
+  ```
+</ParamField>
+
+<ParamField path="ignoredHosts" type="Array<String>">
+  IP addresses to silently ignore (no logging or connection events).
+  
+  ```javascript
+  { ignoredHosts: ['127.0.0.1'] }
+  ```
+</ParamField>
+
+<ParamField path="useXClient" type="Boolean" default="false">
+  Enable XCLIENT extension for trusted clients to override connection properties.
+  
+  <Warning>
+  Only enable for trusted proxies. XCLIENT allows clients to impersonate other connections.
+  </Warning>
+</ParamField>
+
+<ParamField path="useXForward" type="Boolean" default="false">
+  Enable XFORWARD extension for forwarding connection metadata.
+  
+  <Warning>
+  Only enable for trusted proxies.
+  </Warning>
+</ParamField>
+
+## Handler Methods
+
+These can be set as options or defined as methods on the server instance. See [Handler Methods](/api/handler-methods) for details.
+
+<ParamField path="onConnect" type="Function">
+  Called when a client connects. Signature: `(session, callback)`
+</ParamField>
+
+<ParamField path="onSecure" type="Function">
+  Called after TLS is established. Signature: `(socket, session, callback)`
+</ParamField>
+
+<ParamField path="onAuth" type="Function">
+  Called for authentication. Signature: `(auth, session, callback)`
+</ParamField>
+
+<ParamField path="onMailFrom" type="Function">
+  Called for MAIL FROM command. Signature: `(address, session, callback)`
+</ParamField>
+
+<ParamField path="onRcptTo" type="Function">
+  Called for RCPT TO command. Signature: `(address, session, callback)`
+</ParamField>
+
+<ParamField path="onData" type="Function">
+  Called for DATA command. Signature: `(stream, session, callback)`
+</ParamField>
+
+<ParamField path="onClose" type="Function">
+  Called when connection closes. Signature: `(session)`
+</ParamField>
+
+## Example: Complete Configuration
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+const fs = require('fs');
+
+const server = new SMTPServer({
+  // Server identity
+  name: 'mail.example.com',
+  banner: 'Welcome to Example Mail Server',
+  
+  // TLS configuration
+  secure: true,
+  key: fs.readFileSync('server-key.pem'),
+  cert: fs.readFileSync('server-cert.pem'),
+  
+  // Size limits
+  size: 25 * 1024 * 1024, // 25 MB
+  
+  // Authentication
+  authMethods: ['PLAIN', 'LOGIN'],
+  authOptional: false,
+  
+  // Connection limits
+  maxClients: 100,
+  socketTimeout: 120000,
+  
+  // Logging
+  logger: true,
+  
+  // Extensions
+  hideDSN: false,
+  hideENHANCEDSTATUSCODES: false,
+  
+  // Handlers
+  onAuth(auth, session, callback) {
+    // Implement authentication
+    callback(null, { user: auth.username });
+  },
+  
+  onData(stream, session, callback) {
+    // Process message
+    stream.on('end', () => {
+      callback(null, 'Message accepted');
+    });
+  }
+});
+
+server.listen(465);
+```

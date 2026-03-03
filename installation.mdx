@@ -1,0 +1,184 @@
+---
+title: Installation
+description: Install smtp-server in your Node.js project using npm, yarn, or pnpm
+---
+
+# Installation
+
+Get started with smtp-server by installing it in your Node.js project. The library is available on npm and can be installed using your preferred package manager.
+
+## Prerequisites
+
+<Warning>
+  smtp-server requires **Node.js 18.18.0 or higher**. Check your Node.js version with:
+  
+  ```bash
+  node --version
+  ```
+</Warning>
+
+If you need to upgrade Node.js, visit [nodejs.org](https://nodejs.org/) to download the latest LTS version.
+
+## Package Manager Installation
+
+Choose your preferred package manager and run the corresponding command:
+
+<CodeGroup>
+
+```bash npm
+npm install smtp-server
+```
+
+```bash yarn
+yarn add smtp-server
+```
+
+```bash pnpm
+pnpm add smtp-server
+```
+
+</CodeGroup>
+
+## Verify Installation
+
+After installation, verify that smtp-server is installed correctly by checking your `package.json`:
+
+```json package.json
+{
+  "dependencies": {
+    "smtp-server": "^3.18.1"
+  }
+}
+```
+
+You can also verify the installation by running a quick test:
+
+```javascript test.js
+const { SMTPServer } = require('smtp-server');
+
+console.log('smtp-server loaded successfully!');
+console.log('SMTPServer:', typeof SMTPServer);
+```
+
+<CodeGroup>
+
+```bash Run Test
+node test.js
+```
+
+```bash Expected Output
+smtp-server loaded successfully!
+SMTPServer: function
+```
+
+</CodeGroup>
+
+## Dependencies
+
+smtp-server automatically installs the following dependencies:
+
+- **nodemailer** (7.0.13+) - Shared utilities and logging
+- **ipv6-normalize** (1.0.1+) - IPv6 address normalization
+- **punycode.js** (2.3.1+) - Unicode domain name handling
+
+<Info>
+  These dependencies are managed automatically - you don't need to install them separately.
+</Info>
+
+## TypeScript Support
+
+While smtp-server is written in JavaScript, you can use it in TypeScript projects. For type definitions, you may need to create your own declarations or use the library with `any` types:
+
+```typescript server.ts
+import { SMTPServer } from 'smtp-server';
+
+const server: any = new SMTPServer({
+  onData(stream, session, callback) {
+    stream.pipe(process.stdout);
+    stream.on('end', callback);
+  }
+});
+
+server.listen(2525);
+```
+
+<Tip>
+  If you're working with TypeScript, consider contributing type definitions to [@types/smtp-server](https://github.com/DefinitelyTyped/DefinitelyTyped)!
+</Tip>
+
+## Development Installation
+
+If you want to contribute to smtp-server or run the examples from the repository, clone the source code:
+
+```bash
+git clone https://github.com/nodemailer/smtp-server.git
+cd smtp-server
+npm install
+```
+
+Run the test suite to ensure everything is working:
+
+```bash
+npm test
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first SMTP server in minutes
+  </Card>
+  
+  <Card title="API Reference" icon="book" href="/api/smtp-server">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Node.js Version Error
+
+If you see an error about Node.js version compatibility:
+
+```bash
+error smtp-server@3.18.1: The engine "node" is incompatible with this module.
+```
+
+This means your Node.js version is below 18.18.0. Upgrade Node.js to resolve this issue.
+
+### Installation Fails
+
+If installation fails, try:
+
+1. Clear your package manager cache:
+   <CodeGroup>
+   ```bash npm
+   npm cache clean --force
+   ```
+   
+   ```bash yarn
+   yarn cache clean
+   ```
+   
+   ```bash pnpm
+   pnpm store prune
+   ```
+   </CodeGroup>
+
+2. Delete `node_modules` and lock files, then reinstall:
+   ```bash
+   rm -rf node_modules package-lock.json
+   npm install
+   ```
+
+### Permission Errors
+
+If you encounter permission errors during installation, avoid using `sudo`. Instead, configure npm to use a different directory:
+
+```bash
+mkdir ~/.npm-global
+npm config set prefix '~/.npm-global'
+export PATH=~/.npm-global/bin:$PATH
+```
+
+Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent.

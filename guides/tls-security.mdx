@@ -1,0 +1,324 @@
+---
+title: 'TLS Security'
+description: 'Configure TLS/SSL encryption for secure SMTP connections with STARTTLS, SNI, and certificate management'
+---
+
+## Overview
+
+The SMTP Server library provides comprehensive TLS/SSL support to secure your email server communications. This guide covers STARTTLS upgrades, SNI (Server Name Indication) for multi-domain certificates, and certificate configuration.
+
+## STARTTLS Configuration
+
+STARTTLS allows clients to upgrade an insecure connection to a secure one. This is the most common TLS mode for SMTP servers.
+
+<Steps>
+  <Step title="Enable STARTTLS">
+    Configure your server to support STARTTLS by providing TLS credentials:
+
+    ```javascript
+    const { SMTPServer } = require('smtp-server');
+    const fs = require('fs');
+
+    const server = new SMTPServer({
+      secure: false, // Start with insecure connection
+      
+      // Provide TLS certificate and key
+      key: fs.readFileSync('private-key.pem'),
+      cert: fs.readFileSync('certificate.pem'),
+      
+      // Optional: CA certificates for client verification
+      ca: [fs.readFileSync('ca-cert.pem')],
+      
+      onData(stream, session, callback) {
+        stream.pipe(process.stdout);
+        stream.on('end', callback);
+      }
+    });
+
+    server.listen(587);
+    ```
+  </Step>
+
+  <Step title="Verify TLS upgrade">
+    Check the session object to confirm TLS is active:
+
+    ```javascript
+    const server = new SMTPServer({
+      onData(stream, session, callback) {
+        // Check if connection is secure
+        if (session.secure) {
+          console.log('Connection is encrypted');
+          console.log('TLS cipher:', session.tlsOptions.name);
+          console.log('Protocol:', session.tlsOptions.version);
+        }
+        
+        stream.on('end', callback);
+      }
+    });
+    ```
+  </Step>
+
+  <Step title="Configure TLS options">
+    Customize TLS behavior with advanced options:
+
+    ```javascript
+    const server = new SMTPServer({
+      key: fs.readFileSync('private-key.pem'),
+      cert: fs.readFileSync('certificate.pem'),
+      
+      // Honor cipher order from server
+      honorCipherOrder: true,
+      
+      // Minimum TLS version (default: TLSv1)
+      minVersion: 'TLSv1.2',
+      
+      // Request OCSP stapling
+      requestOCSP: true,
+      
+      // Require client certificate
+      requestCert: true,
+      rejectUnauthorized: false // Don't reject unauthorized clients
+    });
+    ```
+  </Step>
+</Steps>
+
+## Direct TLS (Implicit TLS)
+
+For services listening on port 465, use direct TLS where the connection is encrypted from the start:
+
+```javascript
+const server = new SMTPServer({
+  secure: true, // Use TLS immediately
+  
+  key: fs.readFileSync('private-key.pem'),
+  cert: fs.readFileSync('certificate.pem'),
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+
+server.listen(465); // SMTPS port
+```
+
+<Note>
+  When `secure: true` is set, the connection is encrypted immediately. The STARTTLS command will not be available.
+</Note>
+
+## SNI (Server Name Indication)
+
+SNI allows you to serve different certificates for different domains on the same IP address.
+
+### Basic SNI Configuration
+
+```javascript
+const server = new SMTPServer({
+  // Default certificate
+  key: fs.readFileSync('default-key.pem'),
+  cert: fs.readFileSync('default-cert.pem'),
+  
+  // SNI options - different certs for different domains
+  sniOptions: {
+    'mail.example.com': {
+      key: fs.readFileSync('example-key.pem'),
+      cert: fs.readFileSync('example-cert.pem')
+    },
+    'smtp.another.com': {
+      key: fs.readFileSync('another-key.pem'),
+      cert: fs.readFileSync('another-cert.pem')
+    }
+  }
+});
+```
+
+### SNI with Map Object
+
+You can also use a Map for dynamic certificate management:
+
+```javascript
+const sniMap = new Map();
+
+sniMap.set('mail.example.com', {
+  key: fs.readFileSync('example-key.pem'),
+  cert: fs.readFileSync('example-cert.pem')
+});
+
+sniMap.set('smtp.another.com', {
+  key: fs.readFileSync('another-key.pem'),
+  cert: fs.readFileSync('another-cert.pem')
+});
+
+const server = new SMTPServer({
+  key: fs.readFileSync('default-key.pem'),
+  cert: fs.readFileSync('default-cert.pem'),
+  sniOptions: sniMap
+});
+```
+
+### Custom SNI Callback
+
+For advanced SNI handling, provide a custom SNICallback:
+
+```javascript
+const server = new SMTPServer({
+  key: fs.readFileSync('default-key.pem'),
+  cert: fs.readFileSync('default-cert.pem'),
+  
+  SNICallback(servername, callback) {
+    // Load certificate based on servername
+    console.log('SNI request for:', servername);
+    
+    // Return appropriate secure context
+    // Return null/undefined to use default certificate
+    callback(null, null);
+  }
+});
+```
+
+<Warning>
+  The SNICallback is automatically created if not provided. It uses the `secureContext` map populated from `sniOptions`. Only override if you need custom logic.
+</Warning>
+
+## TLS Session Hooks
+
+Use the `onSecure` hook to run custom logic after TLS handshake:
+
+```javascript
+const server = new SMTPServer({
+  secure: true,
+  key: fs.readFileSync('private-key.pem'),
+  cert: fs.readFileSync('certificate.pem'),
+  
+  onSecure(socket, session, callback) {
+    console.log('TLS handshake completed');
+    console.log('Server name:', session.servername);
+    console.log('Cipher suite:', session.tlsOptions);
+    
+    // Verify client certificate if needed
+    const cert = socket.getPeerCertificate();
+    if (cert && cert.subject) {
+      console.log('Client cert CN:', cert.subject.CN);
+    }
+    
+    callback();
+  }
+});
+```
+
+## Updating Certificates
+
+You can update TLS certificates without restarting the server:
+
+```javascript
+const server = new SMTPServer({
+  key: fs.readFileSync('private-key.pem'),
+  cert: fs.readFileSync('certificate.pem')
+});
+
+server.listen(587);
+
+// Later, update the certificates
+server.updateSecureContext({
+  key: fs.readFileSync('new-private-key.pem'),
+  cert: fs.readFileSync('new-certificate.pem'),
+  
+  // Update SNI options too
+  sniOptions: {
+    'mail.example.com': {
+      key: fs.readFileSync('new-example-key.pem'),
+      cert: fs.readFileSync('new-example-cert.pem')
+    }
+  }
+});
+```
+
+<Info>
+  The `updateSecureContext()` method is called automatically during initialization. Existing connections are not affected; only new connections use the updated certificates.
+</Info>
+
+## Requiring TLS for Authentication
+
+Prevent authentication over insecure connections:
+
+```javascript
+const server = new SMTPServer({
+  key: fs.readFileSync('private-key.pem'),
+  cert: fs.readFileSync('certificate.pem'),
+  
+  // Require TLS before allowing AUTH
+  allowInsecureAuth: false, // Default behavior
+  
+  onAuth(auth, session, callback) {
+    // This will only be called after STARTTLS
+    if (auth.username === 'user' && auth.password === 'pass') {
+      return callback(null, { user: 'user' });
+    }
+    callback(new Error('Invalid credentials'));
+  }
+});
+```
+
+## Default TLS Options
+
+The library provides sensible defaults defined in `lib/tls-options.js:8-64`:
+
+```javascript
+{
+  // Honor server cipher preference
+  honorCipherOrder: true,
+  
+  // Disable OCSP by default
+  requestOCSP: false,
+  
+  // Minimum version (supports old SMTP clients)
+  minVersion: 'TLSv1',
+  
+  // Default localhost certificate (for development only)
+  key: '-----BEGIN RSA PRIVATE KEY-----\n...',
+  cert: '-----BEGIN CERTIFICATE-----\n...'
+}
+```
+
+<Warning>
+  The default certificates are for localhost development only. **Never use them in production!** Always provide your own valid certificates.
+</Warning>
+
+## TLS Error Handling
+
+Handle TLS errors gracefully:
+
+```javascript
+server.on('error', (err) => {
+  if (err.code === 'TLSError') {
+    console.error('TLS handshake failed:', err.message);
+    console.error('Protocol:', err.meta.tlsProtocol);
+  }
+});
+```
+
+Common TLS error codes from `lib/smtp-connection.js:1851-1864`:
+- `TLSError` - Failed to establish TLS session
+- `SocketError` - Socket closed during TLS handshake
+
+## Best Practices
+
+<Tip>
+  - Always use TLS in production environments
+  - Use TLS 1.2 or higher (`minVersion: 'TLSv1.2'`)
+  - Keep certificates up to date and monitor expiration
+  - Use strong cipher suites with `honorCipherOrder: true`
+  - Test certificate updates with `updateSecureContext()` before deploying
+  - Monitor the `onSecure` hook for security auditing
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Learn how to handle TLS and connection errors
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/guides/logging">
+    Configure logging to monitor TLS connections
+  </Card>
+</CardGroup>

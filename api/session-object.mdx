@@ -1,0 +1,361 @@
+---
+title: Session Object
+description: Structure and properties of the session object passed to handlers
+---
+
+The session object contains information about the current SMTP connection and transaction. It is passed to all handler methods and persists throughout the connection lifetime.
+
+## Properties
+
+### Connection Information
+
+<ResponseField name="id" type="String" required>
+  Unique session identifier (32-character random string)
+  
+  ```javascript
+  session.id // => "abc123def456..."
+  ```
+</ResponseField>
+
+<ResponseField name="remoteAddress" type="String">
+  Client IP address (IPv4 or IPv6, without `::ffff:` prefix)
+  
+  ```javascript
+  session.remoteAddress // => "192.0.2.1"
+  ```
+</ResponseField>
+
+<ResponseField name="remotePort" type="Number">
+  Client port number
+  
+  ```javascript
+  session.remotePort // => 54321
+  ```
+</ResponseField>
+
+<ResponseField name="localAddress" type="String">
+  Server IP address
+  
+  ```javascript
+  session.localAddress // => "192.0.2.100"
+  ```
+</ResponseField>
+
+<ResponseField name="localPort" type="Number">
+  Server port number
+  
+  ```javascript
+  session.localPort // => 25
+  ```
+</ResponseField>
+
+<ResponseField name="clientHostname" type="String">
+  Client hostname from reverse DNS lookup or `[IP]` if unavailable
+  
+  ```javascript
+  session.clientHostname // => "mail.example.com" or "[192.0.2.1]"
+  ```
+</ResponseField>
+
+<ResponseField name="hostNameAppearsAs" type="String">
+  Hostname provided by client in HELO/EHLO command
+  
+  ```javascript
+  session.hostNameAppearsAs // => "client.example.com"
+  ```
+</ResponseField>
+
+<ResponseField name="openingCommand" type="String">
+  The opening command used: `'HELO'`, `'EHLO'`, or `'LHLO'`
+  
+  ```javascript
+  session.openingCommand // => "EHLO"
+  ```
+</ResponseField>
+
+### Security
+
+<ResponseField name="secure" type="Boolean">
+  Whether connection is using TLS
+  
+  ```javascript
+  session.secure // => true
+  ```
+</ResponseField>
+
+<ResponseField name="tlsOptions" type="Object">
+  TLS cipher information (if connection is secure)
+  
+  <Expandable title="tlsOptions properties">
+    <ResponseField name="name" type="String">
+      Cipher suite name (e.g., `"ECDHE-RSA-AES128-GCM-SHA256"`)
+    </ResponseField>
+    
+    <ResponseField name="version" type="String">
+      TLS version (e.g., `"TLSv1.2"`)
+    </ResponseField>
+  </Expandable>
+  
+  ```javascript
+  session.tlsOptions // => { name: "ECDHE-RSA-AES128-GCM-SHA256", version: "TLSv1.2" }
+  ```
+</ResponseField>
+
+<ResponseField name="servername" type="String">
+  SNI (Server Name Indication) hostname requested by client
+  
+  ```javascript
+  session.servername // => "mail.example.com"
+  ```
+</ResponseField>
+
+### Authentication
+
+<ResponseField name="user" type="Any">
+  User data set by successful authentication in `onAuth` handler. Can be username, user ID, or any object.
+  
+  ```javascript
+  session.user // => "john@example.com" or { id: 123, username: "john" }
+  ```
+</ResponseField>
+
+### Transaction
+
+<ResponseField name="transaction" type="Number">
+  Transaction counter for this connection (incremented after each DATA command)
+  
+  ```javascript
+  session.transaction // => 1
+  ```
+</ResponseField>
+
+<ResponseField name="transmissionType" type="String">
+  Connection type identifier
+  
+  - `SMTP` - Basic SMTP (HELO)
+  - `ESMTP` - Extended SMTP (EHLO)
+  - `LMTP` - Local Mail Transfer Protocol (LHLO)
+  - `ESMTPS` - ESMTP over TLS
+  - `ESMTPSA` - ESMTP over TLS with authentication
+  
+  ```javascript
+  session.transmissionType // => "ESMTPSA"
+  ```
+</ResponseField>
+
+### Envelope
+
+<ResponseField name="envelope" type="Object">
+  Current mail transaction envelope
+  
+  <Expandable title="envelope properties">
+    <ResponseField name="mailFrom" type="Object | false">
+      Sender address object from MAIL FROM command, or `false` if not set
+      
+      ```javascript
+      session.envelope.mailFrom // => { address: "sender@example.com", args: { SIZE: "12345" } }
+      ```
+    </ResponseField>
+    
+    <ResponseField name="rcptTo" type="Array">
+      Array of recipient address objects from RCPT TO commands
+      
+      ```javascript
+      session.envelope.rcptTo // => [{ address: "recipient@example.com", args: {} }]
+      ```
+    </ResponseField>
+    
+    <ResponseField name="bodyType" type="String">
+      Message body encoding: `'7bit'` or `'8bitmime'` (from BODY parameter)
+      
+      ```javascript
+      session.envelope.bodyType // => "8bitmime"
+      ```
+    </ResponseField>
+    
+    <ResponseField name="smtpUtf8" type="Boolean">
+      Whether SMTPUTF8 extension is enabled for this transaction
+      
+      ```javascript
+      session.envelope.smtpUtf8 // => true
+      ```
+    </ResponseField>
+    
+    <ResponseField name="requireTLS" type="Boolean">
+      Whether REQUIRETLS extension is enabled (RFC 8689)
+      
+      ```javascript
+      session.envelope.requireTLS // => true
+      ```
+    </ResponseField>
+    
+    <ResponseField name="dsn" type="Object">
+      Delivery Status Notification parameters (if DSN is not hidden)
+      
+      <Expandable title="dsn properties">
+        <ResponseField name="ret" type="String | null">
+          Return content: `'FULL'` or `'HDRS'` (from MAIL FROM RET parameter)
+        </ResponseField>
+        
+        <ResponseField name="envid" type="String | null">
+          Envelope identifier (from MAIL FROM ENVID parameter)
+        </ResponseField>
+      </Expandable>
+      
+      ```javascript
+      session.envelope.dsn // => { ret: "FULL", envid: "abc123" }
+      ```
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Proxy Information
+
+<ResponseField name="xClient" type="Map">
+  Data from XCLIENT command (if `useXClient` is enabled)
+  
+  ```javascript
+  session.xClient.get('ADDR') // => "10.0.0.1"
+  session.xClient.get('NAME') // => "proxy.example.com"
+  ```
+</ResponseField>
+
+<ResponseField name="xForward" type="Map">
+  Data from XFORWARD command (if `useXForward` is enabled)
+  
+  ```javascript
+  session.xForward.get('ADDR') // => "192.0.2.50"
+  ```
+</ResponseField>
+
+### Error Information
+
+<ResponseField name="error" type="String">
+  Last error message sent to client (if any)
+  
+  ```javascript
+  session.error // => "550 5.1.1 Mailbox does not exist"
+  ```
+</ResponseField>
+
+## Usage Examples
+
+### Accessing Session in Handlers
+
+```javascript
+const server = new SMTPServer({
+  onAuth(auth, session, callback) {
+    console.log('Auth attempt from:', session.remoteAddress);
+    console.log('Connection type:', session.transmissionType);
+    callback(null, { user: auth.username });
+  },
+  
+  onMailFrom(address, session, callback) {
+    console.log('User:', session.user);
+    console.log('Sender:', address.address);
+    callback();
+  },
+  
+  onRcptTo(address, session, callback) {
+    console.log('Sender was:', session.envelope.mailFrom.address);
+    console.log('Adding recipient:', address.address);
+    callback();
+  },
+  
+  onData(stream, session, callback) {
+    console.log('Message from:', session.envelope.mailFrom.address);
+    console.log('Message to:', session.envelope.rcptTo.map(r => r.address));
+    console.log('Body type:', session.envelope.bodyType);
+    console.log('Transaction #:', session.transaction);
+    
+    stream.on('end', () => callback());
+  }
+});
+```
+
+### Storing Custom Data
+
+You can add custom properties to the session object:
+
+```javascript
+const server = new SMTPServer({
+  onAuth(auth, session, callback) {
+    // Store custom data
+    session.customData = {
+      loginTime: new Date(),
+      privileges: ['send', 'receive']
+    };
+    callback(null, { user: auth.username });
+  },
+  
+  onMailFrom(address, session, callback) {
+    // Access custom data
+    if (!session.customData.privileges.includes('send')) {
+      return callback(new Error('No send privilege'));
+    }
+    callback();
+  }
+});
+```
+
+### Checking Connection Security
+
+```javascript
+const server = new SMTPServer({
+  onMailFrom(address, session, callback) {
+    if (!session.secure) {
+      const err = new Error('TLS required');
+      err.responseCode = 530;
+      return callback(err);
+    }
+    
+    console.log('TLS cipher:', session.tlsOptions.name);
+    callback();
+  }
+});
+```
+
+### Working with Envelope Data
+
+```javascript
+const server = new SMTPServer({
+  onData(stream, session, callback) {
+    const envelope = session.envelope;
+    const metadata = {
+      from: envelope.mailFrom.address,
+      to: envelope.rcptTo.map(r => r.address),
+      size: envelope.mailFrom.args.SIZE,
+      bodyType: envelope.bodyType,
+      utf8: envelope.smtpUtf8,
+      secure: session.secure,
+      authenticated: !!session.user,
+      connectionId: session.id,
+      remoteIp: session.remoteAddress,
+      timestamp: new Date()
+    };
+    
+    // Save metadata with message
+    saveMessage(stream, metadata, callback);
+  }
+});
+```
+
+## Session Lifecycle
+
+1. **Connection**: Session is created with connection info (`id`, `remoteAddress`, etc.)
+2. **Greeting**: `clientHostname` is resolved
+3. **TLS (optional)**: `secure`, `tlsOptions`, `servername` are set
+4. **HELO/EHLO**: `openingCommand`, `hostNameAppearsAs` are set
+5. **AUTH (optional)**: `user` is set on successful authentication
+6. **MAIL FROM**: `envelope.mailFrom` is set
+7. **RCPT TO**: Recipients are added to `envelope.rcptTo`
+8. **DATA**: Message is processed
+9. **RSET/QUIT**: Envelope is reset (RSET) or connection closes (QUIT)
+
+The session object persists across multiple transactions on the same connection (multiple MAIL-RCPT-DATA sequences).
+
+## See Also
+
+- [Handler Methods](/api/handler-methods) - Methods that receive the session object
+- [Configuration Options](/api/configuration-options) - Options affecting session behavior
+- [Events](/api/events) - Events that include session data

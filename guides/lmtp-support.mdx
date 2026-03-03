@@ -1,0 +1,427 @@
+---
+title: 'LMTP Support'
+description: 'Configure and use Local Mail Transfer Protocol (LMTP) for local mail delivery'
+---
+
+## Overview
+
+LMTP (Local Mail Transfer Protocol) is a variant of SMTP designed for local mail delivery. Unlike SMTP, LMTP provides per-recipient status responses, making it ideal for mail storage systems and local delivery agents.
+
+## Key Differences from SMTP
+
+<CardGroup cols={2}>
+  <Card title="Per-Recipient Responses" icon="users">
+    LMTP returns a separate response for each recipient, allowing partial delivery success
+  </Card>
+  <Card title="LHLO Command" icon="handshake">
+    Uses LHLO instead of EHLO/HELO for session initialization
+  </Card>
+  <Card title="Required Success" icon="check">
+    Server must accept or reject each recipient individually
+  </Card>
+  <Card title="No Queueing" icon="server">
+    Designed for immediate delivery, not store-and-forward
+  </Card>
+</CardGroup>
+
+## Basic LMTP Server
+
+Enable LMTP mode with the `lmtp` option:
+
+<Steps>
+  <Step title="Create LMTP server">
+    ```javascript
+    const { SMTPServer } = require('smtp-server');
+
+    const server = new SMTPServer({
+      // Enable LMTP mode
+      lmtp: true,
+      
+      // Optional banner
+      banner: 'Welcome to My Awesome LMTP Server',
+      
+      logger: true,
+      
+      onData(stream, session, callback) {
+        stream.pipe(process.stdout);
+        stream.on('end', () => {
+          callback(null, true); // Accept for all recipients
+        });
+      }
+    });
+
+    server.listen(2524, '0.0.0.0');
+    ```
+  </Step>
+
+  <Step title="Verify LMTP mode">
+    Connect to test the LMTP greeting:
+    
+    ```bash
+    telnet localhost 2524
+    # 220 hostname LMTP Welcome to My Awesome LMTP Server
+    ```
+
+    The server responds with "LMTP" instead of "SMTP" in the greeting from `lib/smtp-server.js:316-323`.
+  </Step>
+</Steps>
+
+## Complete LMTP Example
+
+Here's a full example from `examples/lmtp.js:1-82`:
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+const SERVER_PORT = 2524;
+const SERVER_HOST = '0.0.0.0';
+
+const server = new SMTPServer({
+  logger: true,
+  lmtp: true,
+  
+  banner: 'Welcome to My Awesome LMTP Server',
+  
+  // LMTP servers typically don't use STARTTLS
+  disabledCommands: ['STARTTLS', 'AUTH'],
+  
+  // Accept messages up to 10 MB
+  size: 10 * 1024 * 1024,
+  
+  // Validate sender
+  onMailFrom(address, session, callback) {
+    if (/^deny/i.test(address.address)) {
+      return callback(new Error('Not accepted'));
+    }
+    callback();
+  },
+  
+  // Validate recipients with per-recipient responses
+  onRcptTo(address, session, callback) {
+    let err;
+    
+    if (/^deny/i.test(address.address)) {
+      return callback(new Error('Not accepted'));
+    }
+    
+    // Reject large messages to specific users (quota example)
+    if (
+      address.address.toLowerCase() === 'almost-full@example.com' &&
+      Number(session.envelope.mailFrom.args.SIZE) > 100
+    ) {
+      err = new Error('Insufficient channel storage: ' + address.address);
+      err.responseCode = 452;
+      return callback(err);
+    }
+    
+    callback();
+  },
+  
+  // Handle message with per-recipient success
+  onData(stream, session, callback) {
+    stream.pipe(process.stdout);
+    stream.on('end', () => {
+      let err;
+      if (stream.sizeExceeded) {
+        err = new Error('Error: message exceeds fixed maximum message size 10 MB');
+        err.responseCode = 552;
+        return callback(err);
+      }
+      // Return true for LMTP per-recipient success
+      callback(null, true);
+    });
+  }
+});
+
+server.on('error', err => {
+  console.log('Error occurred');
+  console.log(err);
+});
+
+server.listen(SERVER_PORT, SERVER_HOST);
+```
+
+## LHLO vs EHLO/HELO
+
+LMTP uses LHLO instead of EHLO/HELO. The server automatically enforces this:
+
+```javascript
+const server = new SMTPServer({
+  lmtp: true,
+  
+  onConnect(session, callback) {
+    console.log('LMTP connection from:', session.remoteAddress);
+    callback();
+  }
+});
+```
+
+From `lib/smtp-connection.js:582-591`, when `lmtp: true`:
+- EHLO and HELO commands are rejected with error 500
+- Only LHLO is accepted
+- LHLO is internally mapped to EHLO handling
+
+<Warning>
+  Clients must use LHLO when connecting to an LMTP server. EHLO and HELO will be rejected.
+</Warning>
+
+## Per-Recipient Responses
+
+LMTP's key feature is per-recipient status responses. Handle this in your `onData` callback:
+
+### Single Response for All Recipients
+
+```javascript
+onData(stream, session, callback) {
+  stream.on('end', () => {
+    // Same response for all recipients
+    callback(null, 'Message accepted');
+  });
+}
+```
+
+### Different Response Per Recipient
+
+```javascript
+onData(stream, session, callback) {
+  const chunks = [];
+  
+  stream.on('data', chunk => chunks.push(chunk));
+  
+  stream.on('end', () => {
+    const message = Buffer.concat(chunks);
+    const responses = [];
+    
+    // Process each recipient individually
+    session.envelope.rcptTo.forEach(recipient => {
+      try {
+        // Deliver to recipient's mailbox
+        deliverToMailbox(recipient.address, message);
+        
+        // Success response
+        responses.push(`Delivered to ${recipient.address}`);
+      } catch (err) {
+        // Failure response for this recipient
+        const error = new Error(`Failed for ${recipient.address}`);
+        error.responseCode = 450;
+        responses.push(error);
+      }
+    });
+    
+    // Return array of responses
+    callback(null, responses);
+  });
+}
+```
+
+From `lib/smtp-connection.js:1725-1742`, LMTP sends separate responses:
+
+```javascript
+// For errors in LMTP mode
+if (this._server.options.lmtp) {
+  for (i = 0, len = this.session.envelope.rcptTo.length; i < len; i++) {
+    this.send(err.responseCode || 450, err.message);
+  }
+}
+
+// For success with array responses
+message.forEach(response => {
+  if (response instanceof Error) {
+    this.send(response.responseCode || 450, response.message);
+  } else {
+    this.send(250, typeof response === 'string' ? response : 'OK: message accepted');
+  }
+});
+```
+
+<Info>
+  When returning an array from `onData`, each element corresponds to a recipient in `session.envelope.rcptTo` order.
+</Info>
+
+## Error Handling in LMTP
+
+### Per-Recipient Errors
+
+```javascript
+onData(stream, session, callback) {
+  stream.on('end', () => {
+    const responses = session.envelope.rcptTo.map(recipient => {
+      // Check recipient status
+      if (isMailboxFull(recipient.address)) {
+        const err = new Error('Mailbox full');
+        err.responseCode = 452; // Temporary failure
+        return err;
+      }
+      
+      if (!mailboxExists(recipient.address)) {
+        const err = new Error('Mailbox not found');
+        err.responseCode = 550; // Permanent failure
+        return err;
+      }
+      
+      return 'Message delivered';
+    });
+    
+    callback(null, responses);
+  });
+}
+```
+
+### Global Error
+
+```javascript
+onData(stream, session, callback) {
+  stream.on('end', () => {
+    // Single error applies to all recipients
+    const err = new Error('System temporarily unavailable');
+    err.responseCode = 421;
+    callback(err);
+  });
+}
+```
+
+## Quota Management
+
+LMTP is perfect for implementing per-user quotas:
+
+```javascript
+onRcptTo(address, session, callback) {
+  const mailbox = address.address.toLowerCase();
+  const messageSize = Number(session.envelope.mailFrom.args.SIZE) || 0;
+  
+  // Check quota
+  const quota = getMailboxQuota(mailbox);
+  const usage = getMailboxUsage(mailbox);
+  
+  if (usage + messageSize > quota) {
+    const err = new Error(
+      `Insufficient channel storage: ${mailbox} (quota: ${quota} bytes)`
+    );
+    err.responseCode = 452; // Temporary failure
+    return callback(err);
+  }
+  
+  callback();
+}
+```
+
+## LMTP with Authentication
+
+While uncommon, you can enable authentication in LMTP:
+
+```javascript
+const server = new SMTPServer({
+  lmtp: true,
+  
+  // Enable auth (remove from disabledCommands)
+  authMethods: ['PLAIN', 'LOGIN'],
+  
+  onAuth(auth, session, callback) {
+    if (auth.username === 'mailbox' && auth.password === 'secret') {
+      return callback(null, { user: auth.username });
+    }
+    callback(new Error('Invalid credentials'));
+  }
+});
+```
+
+<Note>
+  LMTP is typically used for local delivery where authentication isn't needed. Most LMTP servers disable AUTH and STARTTLS commands.
+</Note>
+
+## Size Limits
+
+Enforce message size limits in LMTP:
+
+```javascript
+const server = new SMTPServer({
+  lmtp: true,
+  
+  // Advertise 10MB limit
+  size: 10 * 1024 * 1024,
+  
+  onData(stream, session, callback) {
+    stream.on('end', () => {
+      // Check if size was exceeded
+      if (stream.sizeExceeded) {
+        const err = new Error(
+          'Error: message exceeds fixed maximum message size 10 MB'
+        );
+        err.responseCode = 552;
+        return callback(err);
+      }
+      callback(null, true);
+    });
+  }
+});
+```
+
+## LMTP Response Codes
+
+Common LMTP response codes:
+
+| Code | Meaning | Use Case |
+|------|---------|----------|
+| 250 | Success | Message delivered to recipient |
+| 450 | Temporary failure | Mailbox locked, try later |
+| 452 | Insufficient storage | Mailbox quota exceeded |
+| 550 | Permanent failure | Mailbox doesn't exist |
+| 552 | Storage exceeded | Message too large |
+| 553 | Invalid mailbox | Malformed address |
+
+## Testing LMTP
+
+Test your LMTP server manually:
+
+```bash
+telnet localhost 2524
+# 220 hostname LMTP Welcome to My Awesome LMTP Server
+
+LHLO test.example.com
+# 250-hostname
+# 250-PIPELINING
+# 250-8BITMIME
+# 250 SIZE 10485760
+
+MAIL FROM:<sender@example.com>
+# 250 Accepted
+
+RCPT TO:<user1@example.com>
+# 250 Accepted
+
+RCPT TO:<user2@example.com>
+# 250 Accepted
+
+DATA
+# 354 End data with <CR><LF>.<CR><LF>
+
+Subject: Test
+
+Test message
+.
+# 250 Delivered to user1@example.com
+# 250 Delivered to user2@example.com
+```
+
+## Best Practices
+
+<Tip>
+  - Use LMTP for local delivery, not internet mail transfer
+  - Implement per-recipient responses for detailed delivery status
+  - Disable AUTH and STARTTLS for local-only LMTP servers
+  - Check quotas in `onRcptTo` before accepting recipients
+  - Use response code 452 for temporary failures (quota full)
+  - Use response code 550 for permanent failures (no such user)
+  - Process messages immediately; don't queue in LMTP mode
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Learn about error codes and response handling
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/guides/logging">
+    Monitor LMTP delivery status with logging
+  </Card>
+</CardGroup>

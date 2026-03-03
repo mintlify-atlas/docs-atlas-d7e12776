@@ -1,0 +1,184 @@
+---
+title: SMTPServer Class
+description: Core SMTPServer class for creating SMTP/LMTP server instances
+---
+
+## Constructor
+
+Creates a new SMTP server instance.
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+const server = new SMTPServer(options);
+```
+
+### Parameters
+
+<ParamField path="options" type="Object">
+  Configuration options for the server. See [Configuration Options](/api/configuration-options) for the complete list.
+</ParamField>
+
+### Example
+
+<CodeGroup>
+
+```javascript Basic Server
+const { SMTPServer } = require('smtp-server');
+
+const server = new SMTPServer({
+  onAuth(auth, session, callback) {
+    if (auth.username !== 'testuser' || auth.password !== 'testpass') {
+      return callback(new Error('Invalid username or password'));
+    }
+    callback(null, { user: auth.username });
+  },
+  onData(stream, session, callback) {
+    stream.pipe(process.stdout);
+    stream.on('end', callback);
+  }
+});
+
+server.listen(25);
+```
+
+```javascript Secure Server
+const { SMTPServer } = require('smtp-server');
+const fs = require('fs');
+
+const server = new SMTPServer({
+  secure: true,
+  key: fs.readFileSync('server-key.pem'),
+  cert: fs.readFileSync('server-cert.pem'),
+  onData(stream, session, callback) {
+    stream.pipe(process.stdout);
+    stream.on('end', callback);
+  }
+});
+
+server.listen(465);
+```
+
+</CodeGroup>
+
+## Methods
+
+### listen()
+
+Start listening on the specified port and interface.
+
+```javascript
+server.listen(port, [host], [callback]);
+```
+
+<ParamField path="port" type="Number" required>
+  Port number to listen on
+</ParamField>
+
+<ParamField path="host" type="String">
+  Host interface to bind to (optional, defaults to all interfaces)
+</ParamField>
+
+<ParamField path="callback" type="Function">
+  Callback function called when server starts listening
+</ParamField>
+
+#### Example
+
+```javascript
+server.listen(2525, 'localhost', () => {
+  console.log('SMTP server listening on localhost:2525');
+});
+```
+
+### close()
+
+Closes the server and stops accepting new connections.
+
+```javascript
+server.close([callback]);
+```
+
+<ParamField path="callback" type="Function">
+  Callback to run once the server is fully closed
+</ParamField>
+
+<Note>
+The server will wait for active connections to complete (up to `closeTimeout` milliseconds) before forcibly closing them.
+</Note>
+
+#### Example
+
+```javascript
+server.close(() => {
+  console.log('SMTP server closed');
+});
+```
+
+### updateSecureContext()
+
+Update TLS certificates and secure context without restarting the server.
+
+```javascript
+server.updateSecureContext([options]);
+```
+
+<ParamField path="options" type="Object">
+  TLS options to update (e.g., `key`, `cert`, `ca`, `sniOptions`)
+</ParamField>
+
+<Note>
+This method is useful for certificate rotation without downtime.
+</Note>
+
+#### Example
+
+```javascript
+const fs = require('fs');
+
+server.updateSecureContext({
+  key: fs.readFileSync('new-server-key.pem'),
+  cert: fs.readFileSync('new-server-cert.pem')
+});
+```
+
+## Properties
+
+### server
+
+Reference to the underlying Node.js net.Server instance.
+
+```javascript
+const netServer = server.server;
+```
+
+### connections
+
+A Set containing all currently active SMTPConnection instances.
+
+```javascript
+console.log(`Active connections: ${server.connections.size}`);
+```
+
+### secureContext
+
+A Map of secure contexts for SNI (Server Name Indication) support.
+
+```javascript
+const defaultContext = server.secureContext.get('*');
+```
+
+### options
+
+The configuration options object passed to the constructor.
+
+```javascript
+const size = server.options.size;
+```
+
+## See Also
+
+- [Configuration Options](/api/configuration-options) - Complete list of server options
+- [Handler Methods](/api/handler-methods) - Handler methods for processing SMTP commands
+- [Session Object](/api/session-object) - Session object structure
+- [Events](/api/events) - Server events

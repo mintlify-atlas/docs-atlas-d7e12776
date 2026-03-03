@@ -1,0 +1,443 @@
+---
+title: 'Authentication'
+description: 'Implement secure authentication with support for multiple SASL mechanisms'
+---
+
+## Overview
+
+The SMTP Server library supports multiple authentication methods through SASL (Simple Authentication and Security Layer). Authentication is handled via the `onAuth` handler, which validates credentials and returns user information.
+
+## Supported Authentication Methods
+
+The library supports the following SASL mechanisms out of the box:
+
+- **PLAIN** - Username and password in base64 (default)
+- **LOGIN** - Legacy username/password method (default)
+- **CRAM-MD5** - Challenge-response authentication
+- **XOAUTH2** - OAuth 2.0 token authentication
+- **XCLIENT** - Postfix proxy authentication
+
+## Configuring Authentication Methods
+
+<ParamField path="authMethods" type="Array<string>" default="['LOGIN', 'PLAIN']">
+  Array of authentication methods to advertise and accept.
+  
+  ```javascript
+  authMethods: ['PLAIN', 'LOGIN', 'CRAM-MD5']
+  ```
+</ParamField>
+
+<CodeGroup>
+```javascript Default Methods
+const server = new SMTPServer({
+  authMethods: ['PLAIN', 'LOGIN'] // Default
+});
+```
+
+```javascript Custom Methods
+const server = new SMTPServer({
+  authMethods: ['PLAIN', 'LOGIN', 'CRAM-MD5', 'XOAUTH2']
+});
+```
+
+```javascript Single Method
+const server = new SMTPServer({
+  authMethods: ['PLAIN'] // Only PLAIN auth
+});
+```
+</CodeGroup>
+
+## The onAuth Handler
+
+The `onAuth` handler is called when a client attempts to authenticate. It receives an `auth` object containing credentials, the session object, and a callback.
+
+### Handler Signature
+
+```javascript
+onAuth(auth, session, callback)
+```
+
+### Auth Object Structure
+
+The `auth` object structure varies by authentication method:
+
+<Accordion title="PLAIN Authentication">
+```javascript
+{
+  method: 'PLAIN',
+  username: 'user@example.com',
+  password: 'secret123'
+}
+```
+</Accordion>
+
+<Accordion title="LOGIN Authentication">
+```javascript
+{
+  method: 'LOGIN',
+  username: 'user@example.com',
+  password: 'secret123'
+}
+```
+</Accordion>
+
+<Accordion title="CRAM-MD5 Authentication">
+```javascript
+{
+  method: 'CRAM-MD5',
+  username: 'user@example.com',
+  challenge: '<random@hostname>',
+  challengeResponse: 'a1b2c3d4e5f6...',
+  validatePassword: (password) => boolean // Helper function
+}
+```
+</Accordion>
+
+<Accordion title="XOAUTH2 Authentication">
+```javascript
+{
+  method: 'XOAUTH2',
+  username: 'user@example.com',
+  accessToken: 'ya29.a0AfH6SMB...'
+}
+```
+</Accordion>
+
+<Accordion title="XCLIENT Authentication">
+```javascript
+{
+  method: 'XCLIENT',
+  username: 'user@example.com',
+  password: null
+}
+```
+</Accordion>
+
+### Callback Response
+
+The callback expects either an error or a response object:
+
+```javascript
+// Success
+callback(null, {
+  user: userData // Can be user ID, object, or any value
+});
+
+// Failure
+callback(null, {
+  message: 'Invalid credentials',
+  responseCode: 535 // Optional SMTP response code
+});
+
+// Error
+callback(new Error('Database connection failed'));
+```
+
+## Implementation Examples
+
+### Basic Username/Password Authentication
+
+<CodeGroup>
+```javascript Simple Validation
+const server = new SMTPServer({
+  authMethods: ['PLAIN', 'LOGIN'],
+  
+  onAuth(auth, session, callback) {
+    const username = 'testuser';
+    const password = 'testpass';
+    
+    if (auth.username === username && auth.password === password) {
+      return callback(null, { user: auth.username });
+    }
+    
+    callback(new Error('Invalid credentials'));
+  }
+});
+```
+
+```javascript Database Lookup
+const server = new SMTPServer({
+  async onAuth(auth, session, callback) {
+    try {
+      const user = await db.users.findOne({
+        email: auth.username
+      });
+      
+      if (!user) {
+        return callback(null, {
+          message: 'User not found'
+        });
+      }
+      
+      const valid = await bcrypt.compare(
+        auth.password,
+        user.passwordHash
+      );
+      
+      if (valid) {
+        callback(null, {
+          user: {
+            id: user.id,
+            email: user.email,
+            name: user.name
+          }
+        });
+      } else {
+        callback(null, {
+          message: 'Invalid password'
+        });
+      }
+    } catch (err) {
+      callback(err);
+    }
+  }
+});
+```
+</CodeGroup>
+
+### CRAM-MD5 Authentication
+
+CRAM-MD5 uses challenge-response to avoid sending passwords in plain text:
+
+```javascript
+const server = new SMTPServer({
+  authMethods: ['PLAIN', 'LOGIN', 'CRAM-MD5'],
+  
+  async onAuth(auth, session, callback) {
+    if (auth.method === 'CRAM-MD5') {
+      try {
+        // Fetch user from database
+        const user = await db.users.findOne({
+          email: auth.username
+        });
+        
+        if (!user) {
+          return callback(null, { message: 'User not found' });
+        }
+        
+        // Validate challenge response using stored password
+        if (auth.validatePassword(user.password)) {
+          callback(null, {
+            user: { id: user.id, email: user.email }
+          });
+        } else {
+          callback(null, { message: 'Invalid credentials' });
+        }
+      } catch (err) {
+        callback(err);
+      }
+    } else {
+      // Handle PLAIN/LOGIN
+      const valid = await validateCredentials(
+        auth.username,
+        auth.password
+      );
+      
+      if (valid) {
+        callback(null, { user: auth.username });
+      } else {
+        callback(null, { message: 'Invalid credentials' });
+      }
+    }
+  }
+});
+```
+
+<Note>
+For CRAM-MD5, you must store the original password (or a reversibly encrypted version) to validate the challenge response. Use `auth.validatePassword(password)` helper.
+</Note>
+
+### XOAUTH2 (OAuth 2.0) Authentication
+
+XOAUTH2 allows authentication using OAuth 2.0 access tokens:
+
+```javascript
+const server = new SMTPServer({
+  authMethods: ['XOAUTH2'],
+  
+  async onAuth(auth, session, callback) {
+    if (auth.method === 'XOAUTH2') {
+      try {
+        // Verify OAuth token with provider
+        const tokenInfo = await verifyGoogleToken(auth.accessToken);
+        
+        if (tokenInfo.email === auth.username) {
+          callback(null, {
+            user: {
+              email: tokenInfo.email,
+              name: tokenInfo.name
+            }
+          });
+        } else {
+          // Return challenge for failed auth
+          callback(null, {
+            data: {
+              status: '401',
+              schemes: 'bearer',
+              scope: 'https://mail.google.com/'
+            }
+          });
+        }
+      } catch (err) {
+        callback(err);
+      }
+    }
+  }
+});
+```
+
+### Method-Specific Authentication
+
+Handle different authentication methods with different logic:
+
+```javascript
+const server = new SMTPServer({
+  authMethods: ['PLAIN', 'LOGIN', 'CRAM-MD5'],
+  
+  onAuth(auth, session, callback) {
+    switch (auth.method) {
+      case 'PLAIN':
+      case 'LOGIN':
+        // Validate username/password
+        return validatePassword(auth.username, auth.password)
+          .then(user => callback(null, { user }))
+          .catch(err => callback(err));
+      
+      case 'CRAM-MD5':
+        // Validate challenge response
+        return validateCramMd5(auth.username, auth.validatePassword)
+          .then(user => callback(null, { user }))
+          .catch(err => callback(err));
+      
+      case 'XOAUTH2':
+        // Validate OAuth token
+        return validateOAuthToken(auth.username, auth.accessToken)
+          .then(user => callback(null, { user }))
+          .catch(err => callback(err));
+      
+      default:
+        callback(new Error('Unsupported auth method'));
+    }
+  }
+});
+```
+
+## Authentication Security
+
+### Requiring TLS for Authentication
+
+By default, the server requires TLS before allowing authentication to prevent credential theft:
+
+```javascript
+const server = new SMTPServer({
+  secure: false, // Start without TLS
+  hideSTARTTLS: false, // Advertise STARTTLS
+  allowInsecureAuth: false, // Require TLS before AUTH (default)
+  
+  key: fs.readFileSync('private.key'),
+  cert: fs.readFileSync('server.crt')
+});
+```
+
+<Warning>
+Setting `allowInsecureAuth: true` allows credentials to be sent over unencrypted connections. Only use in development or secure internal networks.
+</Warning>
+
+### Optional Authentication
+
+By default, authentication is required before accepting mail. To make it optional:
+
+```javascript
+const server = new SMTPServer({
+  authOptional: true, // Allow mail without authentication
+  
+  onAuth(auth, session, callback) {
+    // Validate credentials when provided
+    callback(null, { user: auth.username });
+  }
+});
+```
+
+### Rate Limiting Unauthenticated Commands
+
+Prevent abuse by limiting commands before authentication:
+
+```javascript
+const server = new SMTPServer({
+  maxAllowedUnauthenticatedCommands: 10, // Default
+  
+  // Set to false to disable limit
+  maxAllowedUnauthenticatedCommands: false
+});
+```
+
+## Accessing User Data
+
+Once authenticated, the user data is available in the session:
+
+```javascript
+const server = new SMTPServer({
+  onAuth(auth, session, callback) {
+    callback(null, {
+      user: {
+        id: 123,
+        email: auth.username,
+        quota: 1000000
+      }
+    });
+  },
+  
+  onData(stream, session, callback) {
+    // Access authenticated user
+    console.log('User:', session.user);
+    // { id: 123, email: '...', quota: 1000000 }
+    
+    // Check quota, store in user's mailbox, etc.
+  }
+});
+```
+
+## Custom Error Messages
+
+```javascript
+const server = new SMTPServer({
+  authRequiredMessage: 'Please authenticate before sending mail',
+  
+  onAuth(auth, session, callback) {
+    if (!valid) {
+      return callback(null, {
+        message: 'Invalid username or password',
+        responseCode: 535
+      });
+    }
+    
+    callback(null, { user: userData });
+  }
+});
+```
+
+## Testing Authentication
+
+You can test authentication using telnet or openssl:
+
+```bash
+# Connect to server
+telnet localhost 2525
+
+# EHLO to see available auth methods
+EHLO client.example.com
+
+# PLAIN authentication (base64 encoded "\0username\0password")
+AUTH PLAIN AHRlc3R1c2VyAHRlc3RwYXNz
+
+# LOGIN authentication
+AUTH LOGIN
+dGVzdHVzZXI=        # base64(username)
+dGVzdHBhc3M=        # base64(password)
+```
+
+For STARTTLS connections:
+
+```bash
+openssl s_client -starttls smtp -connect localhost:587
+```

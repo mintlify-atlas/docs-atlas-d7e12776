@@ -1,0 +1,380 @@
+---
+title: 'Server Configuration'
+description: 'Configure your SMTP server with security, performance, and protocol options'
+---
+
+## Overview
+
+The SMTP Server library provides extensive configuration options to customize server behavior, security settings, protocol features, and message handling. All options are passed to the `SMTPServer` constructor.
+
+## Basic Configuration
+
+<CodeGroup>
+```javascript Basic Server
+const { SMTPServer } = require('smtp-server');
+
+const server = new SMTPServer({
+  name: 'smtp.example.com',
+  banner: 'Welcome to My SMTP Server',
+  size: 10 * 1024 * 1024, // 10 MB
+  logger: true
+});
+
+server.listen(2525);
+```
+
+```javascript Secure Server (TLS)
+const server = new SMTPServer({
+  secure: true,
+  key: fs.readFileSync('private.key'),
+  cert: fs.readFileSync('server.crt'),
+  ca: [fs.readFileSync('ca.crt')]
+});
+```
+
+```javascript STARTTLS Support
+const server = new SMTPServer({
+  secure: false,
+  needsUpgrade: false, // Allow plain connections
+  hideSTARTTLS: false, // Advertise STARTTLS
+  allowInsecureAuth: false, // Require TLS for AUTH
+  key: fs.readFileSync('private.key'),
+  cert: fs.readFileSync('server.crt')
+});
+```
+</CodeGroup>
+
+## Core Server Options
+
+<ParamField path="name" type="string" default="os.hostname()">
+  Server hostname used in greeting messages and SMTP responses.
+</ParamField>
+
+<ParamField path="banner" type="string" default="undefined">
+  Custom banner text displayed in the initial greeting after hostname.
+  
+  ```javascript
+  banner: 'Welcome to My Awesome SMTP Server'
+  ```
+</ParamField>
+
+<ParamField path="size" type="number" default="undefined">
+  Maximum message size in bytes. Server advertises this via SIZE extension.
+  
+  ```javascript
+  size: 10 * 1024 * 1024 // 10 MB limit
+  ```
+</ParamField>
+
+<ParamField path="hideSize" type="boolean" default="false">
+  If true, advertises SIZE extension without specifying the limit.
+</ParamField>
+
+<ParamField path="logger" type="boolean | object" default="false">
+  Enable logging. Set to `true` for console logging or provide a custom logger object.
+  
+  ```javascript
+  logger: true // Console logging
+  // or
+  logger: customLoggerObject
+  ```
+</ParamField>
+
+<ParamField path="component" type="string" default="'smtp-server'">
+  Component name for log messages.
+</ParamField>
+
+## TLS/Security Options
+
+<ParamField path="secure" type="boolean" default="false">
+  If true, server requires TLS from the start (implicit TLS on port 465).
+</ParamField>
+
+<ParamField path="needsUpgrade" type="boolean" default="false">
+  Used with `secure: true` to require immediate TLS upgrade after connection.
+</ParamField>
+
+<ParamField path="key" type="Buffer | string">
+  Private key for TLS. Required for secure connections.
+  
+  ```javascript
+  key: fs.readFileSync('/path/to/private.key')
+  ```
+</ParamField>
+
+<ParamField path="cert" type="Buffer | string">
+  Server certificate for TLS. Required for secure connections.
+  
+  ```javascript
+  cert: fs.readFileSync('/path/to/server.crt')
+  ```
+</ParamField>
+
+<ParamField path="ca" type="Array<Buffer | string>">
+  Certificate authority certificates.
+  
+  ```javascript
+  ca: [fs.readFileSync('/path/to/ca.crt')]
+  ```
+</ParamField>
+
+<ParamField path="sniOptions" type="Map | object">
+  SNI (Server Name Indication) options for serving different certificates per domain.
+  
+  ```javascript
+  sniOptions: {
+    'mail.example.com': {
+      key: fs.readFileSync('example-key.pem'),
+      cert: fs.readFileSync('example-cert.pem')
+    },
+    'mail.another.com': {
+      key: fs.readFileSync('another-key.pem'),
+      cert: fs.readFileSync('another-cert.pem')
+    }
+  }
+  ```
+</ParamField>
+
+<ParamField path="SNICallback" type="function">
+  Custom SNI handler function. Default implementation uses `sniOptions`.
+  
+  ```javascript
+  SNICallback: (servername, cb) => {
+    cb(null, tlsContext);
+  }
+  ```
+</ParamField>
+
+## Protocol Features
+
+<ParamField path="lmtp" type="boolean" default="false">
+  Enable LMTP (Local Mail Transfer Protocol) instead of SMTP.
+  
+  <Note>
+  LMTP mode changes protocol behavior and disables HELO/EHLO in favor of LHLO.
+  </Note>
+</ParamField>
+
+<ParamField path="hideSTARTTLS" type="boolean" default="false">
+  If true, does not advertise STARTTLS extension (disables opportunistic TLS).
+</ParamField>
+
+<ParamField path="hidePIPELINING" type="boolean" default="false">
+  If true, does not advertise PIPELINING extension.
+</ParamField>
+
+<ParamField path="hide8BITMIME" type="boolean" default="false">
+  If true, does not advertise 8BITMIME extension.
+</ParamField>
+
+<ParamField path="hideSMTPUTF8" type="boolean" default="false">
+  If true, does not advertise SMTPUTF8 extension (UTF-8 email addresses).
+</ParamField>
+
+<ParamField path="hideENHANCEDSTATUSCODES" type="boolean" default="true">
+  If true, does not advertise or include enhanced status codes (RFC 3463).
+  
+  <Info>
+  Enhanced status codes are disabled by default. Set to `false` to enable them.
+  </Info>
+</ParamField>
+
+<ParamField path="hideDSN" type="boolean" default="true">
+  If true, does not advertise DSN (Delivery Status Notification) extension.
+</ParamField>
+
+<ParamField path="hideREQUIRETLS" type="boolean" default="true">
+  If true, does not advertise REQUIRETLS extension (RFC 8689).
+</ParamField>
+
+<ParamField path="disabledCommands" type="Array<string>" default="[]">
+  Array of SMTP commands to disable.
+  
+  ```javascript
+  disabledCommands: ['AUTH', 'STARTTLS']
+  ```
+</ParamField>
+
+## Connection Limits
+
+<ParamField path="maxClients" type="number" default="undefined">
+  Maximum number of concurrent connections. Server returns 421 when limit exceeded.
+  
+  ```javascript
+  maxClients: 100
+  ```
+</ParamField>
+
+<ParamField path="socketTimeout" type="number" default="60000">
+  Socket timeout in milliseconds (default: 60 seconds).
+</ParamField>
+
+<ParamField path="closeTimeout" type="number" default="30000">
+  Time to wait for pending connections to close when server.close() is called.
+</ParamField>
+
+## Security Options
+
+<ParamField path="allowInsecureAuth" type="boolean" default="false">
+  If false, requires TLS before allowing authentication.
+  
+  <Warning>
+  Setting to `true` allows credentials to be sent in plain text over unencrypted connections.
+  </Warning>
+</ParamField>
+
+<ParamField path="authOptional" type="boolean" default="false">
+  If true, allows mail transactions without authentication.
+</ParamField>
+
+<ParamField path="authRequiredMessage" type="string">
+  Custom error message when authentication is required.
+  
+  ```javascript
+  authRequiredMessage: 'Please authenticate before sending mail'
+  ```
+</ParamField>
+
+<ParamField path="maxAllowedUnauthenticatedCommands" type="number" default="10">
+  Maximum commands allowed before authentication. Connection closed when exceeded.
+  Set to `false` to disable this limit.
+</ParamField>
+
+## Proxy Support
+
+<ParamField path="useProxy" type="boolean | Array<string>" default="false">
+  Enable PROXY protocol support. Can be `true`, `false`, or array of allowed IP addresses.
+  
+  ```javascript
+  useProxy: ['127.0.0.1', '::1'] // Only accept from localhost
+  // or
+  useProxy: ['*'] // Accept from any IP
+  ```
+</ParamField>
+
+<ParamField path="useXClient" type="boolean" default="false">
+  Enable XCLIENT extension for connection property override (Postfix).
+  
+  <Info>
+  Useful when running behind a proxy to preserve original client information.
+  </Info>
+</ParamField>
+
+<ParamField path="useXForward" type="boolean" default="false">
+  Enable XFORWARD extension for forwarding client data (Postfix).
+</ParamField>
+
+<ParamField path="ignoredHosts" type="Array<string>">
+  Array of IP addresses for connections to ignore/skip logging.
+  
+  ```javascript
+  ignoredHosts: ['127.0.0.1', '::1']
+  ```
+</ParamField>
+
+## DNS Configuration
+
+<ParamField path="disableReverseLookup" type="boolean" default="false">
+  If true, skips reverse DNS lookup for client IP addresses.
+  
+  <Tip>
+  Enable this to improve connection speed if reverse DNS is not needed.
+  </Tip>
+</ParamField>
+
+<ParamField path="resolver" type="object">
+  Custom DNS resolver object with a `reverse` method.
+  
+  ```javascript
+  resolver: {
+    reverse: (ip, callback) => {
+      // Custom reverse DNS logic
+      callback(null, ['hostname.example.com']);
+    }
+  }
+  ```
+</ParamField>
+
+## Greeting Customization
+
+<ParamField path="heloResponse" type="string" default="'%s Nice to meet you, %s'">
+  Custom HELO/EHLO response format. Use `%s` placeholders for server name and client hostname.
+  
+  ```javascript
+  heloResponse: '%s Ready to serve, %s'
+  // Output: "smtp.example.com Ready to serve, client.example.com"
+  ```
+</ParamField>
+
+## Event Handlers
+
+Event handlers can be set as constructor options. See [Handling Messages](/concepts/handling-messages) and [Session Management](/concepts/session-management) for details.
+
+<CodeGroup>
+```javascript Constructor Options
+const server = new SMTPServer({
+  onConnect: (session, callback) => { /* ... */ },
+  onAuth: (auth, session, callback) => { /* ... */ },
+  onMailFrom: (address, session, callback) => { /* ... */ },
+  onRcptTo: (address, session, callback) => { /* ... */ },
+  onData: (stream, session, callback) => { /* ... */ },
+  onSecure: (socket, session, callback) => { /* ... */ },
+  onClose: (session) => { /* ... */ }
+});
+```
+
+```javascript Method Override
+class CustomServer extends SMTPServer {
+  onAuth(auth, session, callback) {
+    // Custom authentication logic
+  }
+  
+  onData(stream, session, callback) {
+    // Custom message handling
+  }
+}
+```
+</CodeGroup>
+
+## Complete Example
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+const fs = require('fs');
+
+const server = new SMTPServer({
+  // Server identity
+  name: 'smtp.example.com',
+  banner: 'Welcome to Example SMTP Server',
+  
+  // TLS configuration
+  secure: false,
+  key: fs.readFileSync('private.key'),
+  cert: fs.readFileSync('server.crt'),
+  
+  // Size limits
+  size: 25 * 1024 * 1024, // 25 MB
+  
+  // Authentication
+  authMethods: ['PLAIN', 'LOGIN'],
+  authOptional: false,
+  allowInsecureAuth: false,
+  
+  // Connection limits
+  maxClients: 100,
+  socketTimeout: 60000,
+  
+  // Protocol features
+  hideENHANCEDSTATUSCODES: false,
+  hideDSN: false,
+  
+  // Logging
+  logger: true,
+  
+  // Handlers
+  onAuth: require('./handlers/auth'),
+  onData: require('./handlers/data')
+});
+
+server.listen(587);
+```

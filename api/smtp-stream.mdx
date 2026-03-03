@@ -1,0 +1,355 @@
+---
+title: 'SMTP Stream'
+description: 'Low-level streaming protocol handler for parsing SMTP commands and data mode'
+---
+
+The `SMTPStream` class is a `Writable` stream that parses incoming SMTP protocol data, detecting commands and switching between command mode and data mode for message content.
+
+## Overview
+
+SMTPStream handles the SMTP protocol at the byte level, providing:
+
+- Command parsing with newline detection
+- Automatic mode switching between commands and data
+- Dot-stuffing and dot-unstuffing for data transmission
+- Backpressure handling for large messages
+- Stream size limiting
+
+## Constructor
+
+```javascript
+const { SMTPStream } = require('smtp-server/lib/smtp-stream');
+
+let stream = new SMTPStream(options);
+```
+
+### Options
+
+<ParamField path="options" type="Object">
+  Standard Node.js `Writable` stream options
+</ParamField>
+
+## Properties
+
+<ResponseField name="dataBytes" type="number">
+  Number of bytes emitted to the current data stream
+</ResponseField>
+
+<ResponseField name="isClosed" type="boolean">
+  Indicates if the stream has been closed
+</ResponseField>
+
+<ResponseField name="_dataMode" type="boolean">
+  Internal flag indicating if stream is in data mode
+</ResponseField>
+
+<ResponseField name="_dataStream" type="PassThrough">
+  Output stream for data mode content
+</ResponseField>
+
+<ResponseField name="_maxBytes" type="number">
+  Maximum allowed bytes for data stream (default: Infinity)
+</ResponseField>
+
+<ResponseField name="_remainder" type="string">
+  Unprocessed characters from last parsing iteration (command mode)
+</ResponseField>
+
+<ResponseField name="_lastBytes" type="Buffer">
+  Unprocessed bytes from last parsing iteration (data mode)
+</ResponseField>
+
+## Methods
+
+### oncommand(command, callback)
+
+Command handler that must be implemented. This method is called for each SMTP command received.
+
+<ParamField path="command" type="Buffer" required>
+  The command line as a Buffer (excluding CRLF)
+</ParamField>
+
+<ParamField path="callback" type="function" required>
+  Callback to invoke when command processing is complete
+</ParamField>
+
+```javascript
+stream.oncommand = (command, callback) => {
+    let line = command.toString();
+    console.log('Received command:', line);
+    callback();
+};
+```
+
+<Warning>
+You must override the `oncommand` method before using the stream, or it will throw an error: "Command handler is not set"
+</Warning>
+
+### startDataMode(maxBytes)
+
+Switches the stream to data mode and returns a PassThrough stream for reading message data.
+
+<ParamField path="maxBytes" type="number">
+  Maximum number of bytes allowed in the data stream. If exceeded, `sizeExceeded` property is set to true.
+</ParamField>
+
+**Returns:** `PassThrough` stream for reading unescaped message data
+
+```javascript
+let dataStream = stream.startDataMode(10 * 1024 * 1024); // 10MB limit
+
+dataStream.on('data', (chunk) => {
+    console.log('Received data chunk:', chunk.length, 'bytes');
+});
+
+dataStream.on('end', () => {
+    if (dataStream.sizeExceeded) {
+        console.log('Message exceeded size limit');
+    }
+    console.log('Total bytes:', dataStream.byteLength);
+});
+```
+
+<Note>
+Data mode automatically handles dot-unstuffing according to SMTP protocol (RFC 5321). Leading dots (`.`) are removed from lines that begin with `..`
+</Note>
+
+### continue()
+
+Signals that data mode processing is complete and the stream should return to command mode.
+
+```javascript
+dataStream.on('end', () => {
+    // Process the message
+    saveMessage(dataStream);
+    
+    // Return to command mode
+    stream.continue();
+});
+```
+
+<Info>
+You must call `continue()` after processing the data stream, or the SMTP connection will hang.
+</Info>
+
+## Command Mode
+
+In command mode, the stream parses incoming data line-by-line, looking for `\r\n` or `\n` delimiters.
+
+### Parsing Logic
+
+```javascript lib/smtp-stream.js
+if (!this._dataMode) {
+    newlineRegex = /\r?\n/g;
+    data = this._remainder + chunk.toString('binary');
+
+    let readLine = () => {
+        let match;
+        let line;
+        
+        // Search for the next newline
+        if ((match = newlineRegex.exec(data))) {
+            line = data.substr(pos, match.index - pos);
+            pos += line.length + match[0].length;
+        } else {
+            this._remainder = pos < data.length ? data.substr(pos) : '';
+            return done();
+        }
+
+        this.oncommand(Buffer.from(line, 'binary'), readLine);
+    };
+
+    readLine();
+}
+```
+
+### Mode Switching
+
+If `startDataMode()` is called during command processing, the stream automatically switches modes and re-processes remaining bytes as data:
+
+```javascript lib/smtp-stream.js
+if (this._dataMode) {
+    buf = Buffer.from(data.substr(pos), 'binary');
+    this._remainder = '';
+    return this._write(buf, 'buffer', done);
+}
+```
+
+## Data Mode
+
+In data mode, the stream processes binary data, handling SMTP dot-stuffing protocol and detecting the end-of-data sequence (`\r\n.\r\n`).
+
+### End Detection
+
+The stream looks for the canonical SMTP data terminator:
+
+```javascript lib/smtp-stream.js
+let endseq = Buffer.from('\r\n.\r\n');
+
+// Check if data starts with end terminator
+if (!this.dataBytes && len >= 3 && Buffer.compare(chunk.slice(0, 3), Buffer.from('.\r\n')) === 0) {
+    this._endDataMode(false, chunk.slice(3), done);
+    return;
+}
+```
+
+### Dot Unstuffing
+
+According to RFC 5321, lines beginning with a dot have the leading dot removed:
+
+```javascript lib/smtp-stream.js
+// Check if first symbol is an escape dot
+if (!this.dataBytes && len >= 2 && chunk[0] === 0x2e && chunk[1] === 0x2e) {
+    chunk = chunk.slice(1);
+    len--;
+}
+
+// Check if dot is an escape char and remove it
+if (chunk[i + 1] === 0x2e) {
+    buf = chunk.slice(0, i);
+    this._lastBytes = false;
+    this.dataBytes += buf.length;
+    
+    if (this._dataStream.writable) {
+        this._dataStream.write(buf);
+    }
+    
+    return setImmediate(() => this._feedDataStream(chunk.slice(i + 1), done));
+}
+```
+
+### Buffer Management
+
+The stream keeps the last 4 bytes buffered to ensure proper end-sequence detection:
+
+```javascript lib/smtp-stream.js
+// Keep the last bytes
+if (chunk.length < 4) {
+    this._lastBytes = chunk;
+} else {
+    this._lastBytes = chunk.slice(chunk.length - 4);
+}
+
+// Emit available bytes
+if (this._lastBytes.length < chunk.length) {
+    buf = chunk.slice(0, chunk.length - this._lastBytes.length);
+    this.dataBytes += buf.length;
+    
+    if (this._dataStream.writable) {
+        handled = this._dataStream.write(buf);
+        if (!handled) {
+            this._dataStream.once('drain', done);
+        }
+    }
+}
+```
+
+<Note>
+The stream implements proper backpressure by listening to the `drain` event when the data stream buffer is full.
+</Note>
+
+## Data Stream Properties
+
+When data mode ends, the returned PassThrough stream is enhanced with additional properties:
+
+<ResponseField name="byteLength" type="number">
+  Total number of bytes received in data mode
+</ResponseField>
+
+<ResponseField name="sizeExceeded" type="boolean">
+  True if `byteLength` exceeds the `maxBytes` limit
+</ResponseField>
+
+```javascript lib/smtp-stream.js
+this._dataStream.byteLength = this.dataBytes;
+this._dataStream.sizeExceeded = this.dataBytes > this._maxBytes;
+```
+
+## Complete Example
+
+```javascript
+const { SMTPStream } = require('smtp-server/lib/smtp-stream');
+const net = require('net');
+
+let server = net.createServer((socket) => {
+    let stream = new SMTPStream();
+    let dataStream = null;
+    
+    // Handle commands
+    stream.oncommand = (command, callback) => {
+        let line = command.toString().trim();
+        console.log('C:', line);
+        
+        if (line.toUpperCase() === 'DATA') {
+            socket.write('354 Start mail input\r\n');
+            dataStream = stream.startDataMode(10 * 1024 * 1024);
+            
+            dataStream.on('data', (chunk) => {
+                console.log('Received', chunk.length, 'bytes');
+            });
+            
+            dataStream.on('end', () => {
+                console.log('Data complete:', dataStream.byteLength, 'bytes');
+                
+                if (dataStream.sizeExceeded) {
+                    socket.write('552 Message exceeds size limit\r\n');
+                } else {
+                    socket.write('250 Message accepted\r\n');
+                }
+                
+                stream.continue();
+            });
+        } else if (line.toUpperCase() === 'QUIT') {
+            socket.write('221 Bye\r\n');
+            socket.end();
+        } else {
+            socket.write('250 OK\r\n');
+        }
+        
+        callback();
+    };
+    
+    socket.pipe(stream);
+    socket.write('220 SMTP Server ready\r\n');
+});
+
+server.listen(2525);
+```
+
+## Edge Cases
+
+### Flush on Stream End
+
+When the input stream ends, any remaining buffered command is flushed:
+
+```javascript lib/smtp-stream.js
+this.on('finish', () => this._flushData());
+
+_flushData() {
+    let line;
+    if (this._remainder && !this.isClosed) {
+        line = this._remainder;
+        this._remainder = '';
+        this.oncommand(Buffer.from(line, 'binary'));
+    }
+}
+```
+
+### Preventing Duplicate Callbacks
+
+The stream protects against duplicate callback invocation:
+
+```javascript lib/smtp-stream.js
+let called = false;
+let done = (...args) => {
+    if (called) {
+        return;
+    }
+    called = true;
+    next(...args);
+};
+```
+
+<Warning>
+Always call the callback in your `oncommand` handler to avoid blocking the stream.
+</Warning>

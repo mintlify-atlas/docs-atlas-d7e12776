@@ -1,0 +1,558 @@
+---
+title: 'Error Handling'
+description: 'Handle errors, customize response codes, and implement enhanced status codes in your SMTP server'
+---
+
+## Overview
+
+Proper error handling is crucial for SMTP servers. This guide covers error responses, enhanced status codes, custom error messages, and common error scenarios.
+
+## Basic Error Handling
+
+Return errors via callback functions in handler methods:
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+const server = new SMTPServer({
+  onAuth(auth, session, callback) {
+    if (auth.username !== 'user' || auth.password !== 'pass') {
+      // Return error with custom message
+      return callback(new Error('Invalid username or password'));
+    }
+    callback(null, { user: auth.username });
+  },
+  
+  onMailFrom(address, session, callback) {
+    if (address.address.endsWith('@blocked.com')) {
+      return callback(new Error('Domain blocked'));
+    }
+    callback();
+  },
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+```
+
+## Custom Response Codes
+
+Set custom SMTP response codes using the `responseCode` property:
+
+```javascript
+const server = new SMTPServer({
+  onRcptTo(address, session, callback) {
+    if (!userExists(address.address)) {
+      const err = new Error('Mailbox not found');
+      err.responseCode = 550; // Permanent failure
+      return callback(err);
+    }
+    
+    if (isMailboxFull(address.address)) {
+      const err = new Error('Mailbox full, try again later');
+      err.responseCode = 452; // Temporary failure
+      return callback(err);
+    }
+    
+    callback();
+  }
+});
+```
+
+## SMTP Response Codes
+
+### Success Codes (2xx)
+
+| Code | Meaning | When to Use |
+|------|---------|-------------|
+| 200 | System status | Help/status responses |
+| 220 | Service ready | Greeting message |
+| 221 | Closing channel | QUIT response |
+| 235 | Auth successful | After successful authentication |
+| 250 | OK | Command completed successfully |
+| 251 | User not local | Will forward to another server |
+| 252 | Cannot verify | Will attempt delivery anyway |
+
+### Temporary Failure (4xx)
+
+| Code | Meaning | When to Use |
+|------|---------|-------------|
+| 421 | Service unavailable | Server shutting down |
+| 450 | Mailbox unavailable | Mailbox temporarily locked |
+| 451 | Local error | Processing error |
+| 452 | Insufficient storage | Mailbox quota exceeded |
+| 454 | TLS unavailable | TLS temporarily unavailable |
+
+### Permanent Failure (5xx)
+
+| Code | Meaning | When to Use |
+|------|---------|-------------|
+| 500 | Syntax error | Unrecognized command |
+| 501 | Syntax error in params | Invalid arguments |
+| 502 | Not implemented | Command not supported |
+| 503 | Bad sequence | Commands out of order |
+| 530 | Auth required | Must authenticate first |
+| 535 | Auth failed | Invalid credentials |
+| 550 | Mailbox unavailable | User doesn't exist |
+| 552 | Storage exceeded | Message too large |
+| 553 | Mailbox invalid | Invalid address syntax |
+| 554 | Transaction failed | General failure |
+
+## Enhanced Status Codes
+
+Enhanced status codes (RFC 3463) provide more detailed error information. They're enabled by default in this library.
+
+### Format
+
+Enhanced status codes follow the format: `class.subject.detail`
+
+- **Class**: 2 (success), 4 (temporary), 5 (permanent)
+- **Subject**: Category (0=undefined, 1=addressing, 2=mailbox, 3=system, 4=network, 5=protocol, 7=security)
+- **Detail**: Specific status
+
+Example: `5.1.1` = Permanent failure (5), addressing issue (1), mailbox not found (1)
+
+### Enhanced Status Code Mappings
+
+From `lib/smtp-connection.js:16-92`, the library defines comprehensive mappings:
+
+```javascript
+const ENHANCED_STATUS_CODES = {
+  // Success
+  250: '2.0.0',  // OK
+  235: '2.7.0',  // Authentication successful
+  
+  // Temporary failures
+  421: '4.4.2',  // Service unavailable
+  450: '4.2.1',  // Mailbox unavailable
+  452: '4.2.2',  // Insufficient storage
+  
+  // Permanent failures
+  530: '5.7.0',  // Authentication required
+  535: '5.7.8',  // Invalid credentials
+  550: '5.1.1',  // Mailbox not found
+  552: '5.2.2',  // Storage exceeded
+  553: '5.1.3',  // Invalid mailbox syntax
+};
+```
+
+### Contextual Status Codes
+
+Use specific enhanced codes for better error context:
+
+```javascript
+// From lib/smtp-connection.js:64-92
+const CONTEXTUAL_STATUS_CODES = {
+  MAIL_FROM_OK: '2.1.0',        // Valid sender
+  RCPT_TO_OK: '2.1.5',          // Valid recipient
+  DATA_OK: '2.6.0',             // Message accepted
+  
+  AUTH_SUCCESS: '2.7.0',        // Auth successful
+  AUTH_REQUIRED: '5.7.0',       // Auth required
+  AUTH_INVALID: '5.7.8',        // Invalid credentials
+  
+  MAILBOX_FULL: '4.2.2',        // Quota exceeded
+  MAILBOX_NOT_FOUND: '5.1.1',   // No such user
+  MAILBOX_SYNTAX_ERROR: '5.1.3', // Invalid syntax
+  
+  SYSTEM_ERROR: '4.3.0',        // System error
+  SYSTEM_FULL: '4.3.1',         // Storage full
+};
+```
+
+These are used automatically when you send responses:
+
+```javascript
+// From lib/smtp-connection.js:1604
+this.send(250, 'Accepted', 'MAIL_FROM_OK');
+// Sends: 250 2.1.0 Accepted
+
+// From lib/smtp-connection.js:1571
+this.send(501, 'Error: Bad sender address syntax', 'MAILBOX_SYNTAX_ERROR');
+// Sends: 501 5.1.3 Error: Bad sender address syntax
+```
+
+### Disabling Enhanced Status Codes
+
+```javascript
+const server = new SMTPServer({
+  // Disable enhanced status codes
+  hideENHANCEDSTATUSCODES: true,
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+
+// Without enhanced codes:
+// 250 Accepted
+
+// With enhanced codes (default):
+// 250 2.0.0 Accepted
+```
+
+<Info>
+  Enhanced status codes are enabled by default. Set `hideENHANCEDSTATUSCODES: true` only if you have legacy clients that don't support them.
+</Info>
+
+## Error Scenarios
+
+### Authentication Errors
+
+```javascript
+onAuth(auth, session, callback) {
+  // Invalid credentials - permanent failure
+  if (!validCredentials(auth.username, auth.password)) {
+    const err = new Error('Invalid username or password');
+    err.responseCode = 535; // Auth failed
+    return callback(err);
+    // Sends: 535 5.7.8 Invalid username or password
+  }
+  
+  // Account locked - temporary failure
+  if (isAccountLocked(auth.username)) {
+    const err = new Error('Account temporarily locked');
+    err.responseCode = 454; // Temporary auth failure
+    return callback(err);
+    // Sends: 454 4.7.0 Account temporarily locked
+  }
+  
+  callback(null, { user: auth.username });
+}
+```
+
+### Size Limit Errors
+
+```javascript
+const server = new SMTPServer({
+  size: 10 * 1024 * 1024, // 10 MB limit
+  
+  onData(stream, session, callback) {
+    stream.on('end', () => {
+      // Check if size exceeded (lib/smtp-connection.js:1695-1698)
+      if (stream.sizeExceeded) {
+        const err = new Error(
+          'Error: message exceeds fixed maximum message size 10 MB'
+        );
+        err.responseCode = 552;
+        return callback(err);
+        // Sends: 552 5.2.2 Error: message exceeds...
+      }
+      
+      callback();
+    });
+  }
+});
+```
+
+### Quota Errors
+
+```javascript
+onRcptTo(address, session, callback) {
+  const mailbox = address.address;
+  const messageSize = Number(session.envelope.mailFrom.args.SIZE) || 0;
+  
+  const quota = getQuota(mailbox);
+  const usage = getCurrentUsage(mailbox);
+  
+  if (usage + messageSize > quota) {
+    const err = new Error(
+      `Insufficient channel storage: ${mailbox}`
+    );
+    err.responseCode = 452; // Temporary - quota might free up
+    return callback(err);
+    // Sends: 452 4.2.2 Insufficient channel storage: user@example.com
+  }
+  
+  callback();
+}
+```
+
+### Mailbox Errors
+
+```javascript
+onRcptTo(address, session, callback) {
+  const mailbox = address.address;
+  
+  // Permanent: user doesn't exist
+  if (!userExists(mailbox)) {
+    const err = new Error('User not found: ' + mailbox);
+    err.responseCode = 550;
+    return callback(err);
+    // Sends: 550 5.1.1 User not found: user@example.com
+  }
+  
+  // Temporary: mailbox locked
+  if (isMailboxLocked(mailbox)) {
+    const err = new Error('Mailbox temporarily unavailable');
+    err.responseCode = 450;
+    return callback(err);
+    // Sends: 450 4.2.1 Mailbox temporarily unavailable
+  }
+  
+  callback();
+}
+```
+
+## LMTP Error Handling
+
+LMTP provides per-recipient error responses:
+
+```javascript
+const server = new SMTPServer({
+  lmtp: true,
+  
+  onData(stream, session, callback) {
+    stream.on('end', () => {
+      const responses = [];
+      
+      // Check each recipient
+      session.envelope.rcptTo.forEach(recipient => {
+        if (!deliverToMailbox(recipient.address)) {
+          // Error for this recipient
+          const err = new Error('Delivery failed for ' + recipient.address);
+          err.responseCode = 450;
+          responses.push(err);
+        } else {
+          // Success for this recipient
+          responses.push('Delivered to ' + recipient.address);
+        }
+      });
+      
+      // Return per-recipient responses
+      callback(null, responses);
+      // Sends:
+      // 250 2.6.0 Delivered to user1@example.com
+      // 450 4.0.0 Delivery failed for user2@example.com
+    });
+  }
+});
+```
+
+From `lib/smtp-connection.js:1716-1742`, LMTP sends individual responses:
+
+```javascript
+if (this._server.options.lmtp) {
+  // Separate error for each recipient
+  for (i = 0, len = this.session.envelope.rcptTo.length; i < len; i++) {
+    this.send(err.responseCode || 450, err.message);
+  }
+}
+```
+
+## Server Error Events
+
+Listen for server-level errors:
+
+```javascript
+const server = new SMTPServer({
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+
+server.on('error', (err) => {
+  console.error('Server error:', err.message);
+  
+  // TLS errors (lib/smtp-connection.js:1851-1864)
+  if (err.code === 'TLSError') {
+    console.error('TLS handshake failed');
+    console.error('Protocol:', err.meta.tlsProtocol);
+  }
+  
+  // Socket errors
+  if (err.code === 'ECONNRESET') {
+    console.error('Connection reset by peer');
+  }
+});
+
+server.listen(25);
+```
+
+## Connection Errors
+
+Handle errors in the `onConnect` hook:
+
+```javascript
+const server = new SMTPServer({
+  onConnect(session, callback) {
+    // Block specific IPs
+    if (isBlocked(session.remoteAddress)) {
+      const err = new Error('Access denied');
+      err.responseCode = 554;
+      return callback(err);
+      // Client receives: 554 5.0.0 Access denied
+      // Connection is closed
+    }
+    
+    // Rate limiting
+    if (exceedsRateLimit(session.remoteAddress)) {
+      const err = new Error('Rate limit exceeded, try again later');
+      err.responseCode = 421;
+      return callback(err);
+      // Client receives: 421 4.4.2 Rate limit exceeded...
+      // Connection is closed
+    }
+    
+    callback();
+  }
+});
+```
+
+From `lib/smtp-connection.js:269-272`, errors in `onConnect` close the connection:
+
+```javascript
+if (err) {
+  this.send(err.responseCode || 554, err.message, false);
+  return this.close();
+}
+```
+
+## Data Stream Errors
+
+Handle errors during message reception:
+
+```javascript
+onData(stream, session, callback) {
+  const chunks = [];
+  
+  stream.on('data', chunk => {
+    chunks.push(chunk);
+  });
+  
+  stream.on('error', (err) => {
+    console.error('Stream error:', err);
+    callback(err);
+  });
+  
+  stream.on('end', () => {
+    const message = Buffer.concat(chunks);
+    
+    // Validate message
+    if (!isValidMessage(message)) {
+      const err = new Error('Invalid message format');
+      err.responseCode = 554;
+      return callback(err);
+    }
+    
+    callback();
+  });
+}
+```
+
+## Error Messages
+
+### Custom Error Messages
+
+```javascript
+const server = new SMTPServer({
+  // Custom "auth required" message
+  authRequiredMessage: 'You must authenticate before sending mail',
+  
+  authOptional: false,
+  
+  onData(stream, session, callback) {
+    stream.on('end', callback);
+  }
+});
+```
+
+From `lib/smtp-connection.js:629-634`:
+
+```javascript
+if (!this.session.user && this._isSupported('AUTH')) {
+  this.send(530,
+    typeof this._server.options.authRequiredMessage === 'string'
+      ? this._server.options.authRequiredMessage
+      : 'Error: authentication Required'
+  );
+}
+```
+
+### Multi-Line Error Messages
+
+Send multi-line responses:
+
+```javascript
+// In your handler
+const err = new Error('Multiple errors occurred');
+err.responseCode = 554;
+err.message = [
+  'Transaction failed',
+  'Reason: Spam detected',
+  'Score: 8.5/5.0',
+  'Please contact abuse@example.com'
+].join('\n');
+callback(err);
+
+// Client receives:
+// 554-5.0.0 Transaction failed
+// 554-5.0.0 Reason: Spam detected
+// 554-5.0.0 Score: 8.5/5.0
+// 554 5.0.0 Please contact abuse@example.com
+```
+
+## Best Practices
+
+<Tip>
+  - Use 4xx codes for temporary failures (client should retry)
+  - Use 5xx codes for permanent failures (client should not retry)
+  - Provide helpful error messages to aid troubleshooting
+  - Use enhanced status codes for better error categorization
+  - Log all errors with connection ID for tracking
+  - Don't reveal sensitive information in error messages
+  - Use rate limiting to prevent abuse
+  - Implement proper quota checks before accepting messages
+  - Test error scenarios thoroughly
+</Tip>
+
+## Common Mistakes
+
+<Warning>
+  - **Don't** use 5xx codes for temporary issues (use 4xx)
+  - **Don't** expose system paths or internal details in errors
+  - **Don't** use generic error messages (be specific)
+  - **Don't** forget to set `responseCode` on errors
+  - **Don't** ignore stream errors in `onData`
+  - **Don't** return success when validation fails
+</Warning>
+
+## Error Handling Checklist
+
+<Steps>
+  <Step title="Validate input early">
+    Check addresses, sizes, and quotas before accepting data
+  </Step>
+  
+  <Step title="Use appropriate codes">
+    Choose the correct response code (2xx/4xx/5xx) for each scenario
+  </Step>
+  
+  <Step title="Provide context">
+    Include helpful details in error messages
+  </Step>
+  
+  <Step title="Log errors">
+    Record all errors with connection ID and context
+  </Step>
+  
+  <Step title="Handle streams">
+    Always handle stream errors in `onData`
+  </Step>
+  
+  <Step title="Test failure cases">
+    Verify error responses work as expected
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Logging" icon="file-lines" href="/guides/logging">
+    Configure logging to track errors and debug issues
+  </Card>
+  <Card title="LMTP Support" icon="server" href="/guides/lmtp-support">
+    Handle per-recipient errors in LMTP mode
+  </Card>
+</CardGroup>

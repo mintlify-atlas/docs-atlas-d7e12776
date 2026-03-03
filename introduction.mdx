@@ -1,0 +1,120 @@
+---
+title: Introduction
+description: Create custom SMTP and LMTP servers on the fly with smtp-server
+---
+
+# Welcome to smtp-server
+
+smtp-server is a powerful Node.js library for creating custom SMTP and LMTP server instances on the fly. Built by the team behind Nodemailer, it provides a flexible and extensible foundation for email infrastructure.
+
+## Why smtp-server?
+
+<CardGroup cols={2}>
+  <Card title="Full Protocol Control" icon="server">
+    Complete control over SMTP/LMTP protocol handling with customizable command processing and authentication flows.
+  </Card>
+  
+  <Card title="Enterprise Ready" icon="shield-check">
+    Production-tested features including TLS/STARTTLS support, multiple authentication methods, and proxy protocol support.
+  </Card>
+  
+  <Card title="Developer Friendly" icon="code">
+    Simple, event-driven API with comprehensive hooks for validation, authentication, and message processing.
+  </Card>
+  
+  <Card title="High Performance" icon="bolt">
+    Stream-based message handling for efficient processing of large emails with configurable size limits.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+- **Multiple Protocol Support**: Create both SMTP and LMTP servers
+- **Flexible Authentication**: Built-in support for PLAIN, LOGIN, and CRAM-MD5 authentication methods
+- **TLS/STARTTLS**: Full support for secure connections with SNI (Server Name Indication)
+- **Proxy Protocol**: PROXY protocol support for deployment behind load balancers
+- **Stream Processing**: Efficient handling of large messages using Node.js streams
+- **Extensible Validation**: Custom validation hooks for sender, recipient, and message content
+- **Advanced Features**: DSN (Delivery Status Notifications), ENHANCEDSTATUSCODES, REQUIRETLS, and more
+
+## Quick Example
+
+Here's a minimal SMTP server that logs received messages:
+
+```javascript
+const { SMTPServer } = require('smtp-server');
+
+const server = new SMTPServer({
+  logger: true,
+  disabledCommands: ['STARTTLS', 'AUTH'],
+  onData(stream, session, callback) {
+    stream.pipe(process.stdout); // Output message to console
+    stream.on('end', callback);
+  }
+});
+
+server.listen(2525);
+```
+
+<Note>
+  The server listens on port 2525 by default in examples to avoid requiring root privileges (ports below 1024 require elevated permissions).
+</Note>
+
+## Use Cases
+
+<Steps>
+  <Step title="Testing & Development">
+    Create local SMTP servers for testing email functionality in your applications without sending real emails.
+  </Step>
+  
+  <Step title="Email Processing Pipelines">
+    Build custom email processing systems with validation, filtering, and routing logic.
+  </Step>
+  
+  <Step title="Webhook Bridges">
+    Convert incoming emails into webhooks or API calls for integration with other services.
+  </Step>
+  
+  <Step title="Email Archiving">
+    Implement custom archiving solutions with full control over message storage and indexing.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Get started by installing smtp-server in your project
+  </Card>
+  
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first SMTP server in minutes
+  </Card>
+  
+  <Card title="API Reference" icon="book" href="/api/smtp-server">
+    Explore the complete API documentation
+  </Card>
+  
+  <Card title="Core Concepts" icon="lightbulb" href="/concepts/server-configuration">
+    Learn key concepts and configuration
+  </Card>
+</CardGroup>
+
+## System Requirements
+
+<Info>
+  smtp-server requires **Node.js 18.18.0** or higher. Make sure your environment meets this requirement before installation.
+</Info>
+
+## Community & Support
+
+smtp-server is part of the Nodemailer ecosystem and is actively maintained:
+
+- **GitHub**: [nodemailer/smtp-server](https://github.com/nodemailer/smtp-server)
+- **License**: MIT-0 (Public Domain Equivalent)
+- **Author**: Andris Reinman and contributors
+- **Issues**: Report bugs and feature requests on [GitHub Issues](https://github.com/nodemailer/smtp-server/issues)
+
+<Tip>
+  Looking for a full email sending solution? Check out [Nodemailer](https://nodemailer.com/) for SMTP client functionality.
+</Tip>
